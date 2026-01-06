@@ -26,17 +26,26 @@ formatted equations in the resulting PDF.
 
 ## Installation From GitHub (Recommended)
 
+At this time the GitHub version is ahead of the RubyGems repository, so to take advantage of image caching you must
+clone from GitHub.  Fortunately, it's no more difficult to use than the RubyGems version, the asciidoctor-pdf command
+line argument is just slightly different.
+
 1. Clone the repository to your HDD.
-1. To use this extension with Asciidoctor-PDF you must require the ruby file on the command line when running asciidoctor-pdf with `-r <Clone Location>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb` file.
+1. To use this extension you must require the ruby file on the command line when running asciidoctor-pdf with `-r <Clone Location>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb`
 
-This completely replaces the `-r asciidoctor-pdf-mathjax` argument, so remove this from the asciidoctor-pdf command arguments if you've been using an older version of asciidoctor-pdf-mathjax.
+This completely replaces the `-r asciidoctor-pdf-mathjax` argument used by the RubyGems version, so remove this from the command line arguments if you've been using an older version of this extension from RubyGems.
 
-The easiest way to get up and running with a working asciidoctor-pdf, and dependencies required for the asciidoctor-pdf-mathjax extension, is to use the AsciiDoctor-PDF Docker image along with Docker or Podman:
+The easiest way to get up and running with a working asciidoctor-pdf, and the dependencies required for this extension, is to use the AsciiDoctor-PDF Docker image along with Docker or Podman.
+
+The following Dockerfile will set up a Docker/Podman image that is ready-to-use:
 
 ```Dockerfile
 FROM asciidoctor/docker-asciidoctor:1.82
 
 WORKDIR /documents
+
+#set up directory for local extension to be mounted
+RUN mkdir /extensions
 
 RUN apk add --upgrade nodejs npm
 RUN npm install -g mathjax-node
@@ -45,7 +54,15 @@ ENV NODE_PATH=/usr/local/lib/node_modules
 ENTRYPOINT ["bash", "-c", "exec \"$@\"", "--"]
 ```
 
-This Dockerfile does not install the RubyGems version of asciidoctor-pdf-mathjax, because we are cloning the extension directly from GitHub instead.
+Refer to the Docker/Podman manual for instructions on mounting local directories into the running container.
+
+I recommend mounting your ADoc project into the container's `/documents` directory, and the `asciidoctor-pdf-mathjax`
+directory into the container's `extensions` directory.  Because this Dockerfile initializes the working directory to
+`/documents` the input file in the asciidoctor-pdf command can either be explicitly set as `/documents/<ADoc file>`, or
+just use `<Adoc File>` which requires no directory specified.  The location of this extension, when telling
+asciidoctor-pdf to require it, will also therefore be 
+`-r /extensions/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb`, which is the location within the container
+where the extension will be found by asciidoctor-pdf.
 
 ## Installation Using Docker And RubyGems
 
@@ -84,7 +101,9 @@ still there then the caching feature will be absent.
 - [Asciidoctor](https://asciidoctor.org/) and [Asciidoctor PDF](https://github.com/asciidoctor/asciidoctor-pdf) ([installation instructions](https://github.com/asciidoctor/asciidoctor-pdf?tab=readme-ov-file#prerequisites))
 - [NodeJS](https://nodejs.org/en)
 - [MathJax Node](https://github.com/mathjax/MathJax-node) (required for PDF generation with LaTeX).
-  Install it globally with
+- Install it:
+  - By cloning it to your HDD from GitHub,
+  - Or install it globally from RubyGems with
   ```sh
   npm install -g mathjax-node
   ```
@@ -93,6 +112,9 @@ A good starting point is using the [Asciidoctor Docker Container](https://github
 You can find an example of a docker container configuration for Asciidoctor PDF MathJax in [this Dockerfile](test/Dockerfile).
 
 ### Installation from RubyGems
+
+> [!WARNING]
+> The RubyGems version may be behind this GitHub version, and lack the SVG image caching feature.
 
 1. The `asciidoctor-pdf-mathjax` gem is available on RubyGems at https://rubygems.org/gems/asciidoctor-pdf-mathjax.
    To install it:
@@ -126,6 +148,7 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
    = Document with Math
    :stem:
    :math-cache-dir: <Your Cache Dir>
+   :math-font: <Your Chosen MathJax v2 Font>
 
    //End of heading and attribute settings.
 
@@ -141,10 +164,23 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
 > Don't forget to set the cache directory attribute to a location on your HDD where you want the cached SVG image files to live.  Without this attribute set the SVG images are regenerated each time you build your PDF, and then destroyed once the SVG data has been embedded into the PDF.
 
 > [!TIP]
+> You don't have to specify the math-font attribute if you are satisfied with the default font used by MathJax.
+
+> [!TIP]
 > Be aware that the first blank line in an ADoc file signals the end of the header/settings.  Ensure any attributes you wish to
 > set for your ADoc project are all above the first blank line.
 
-2. Run the `asciidoctor-pdf` command with the extension:
+2. Run the `asciidoctor-pdf` command with the extension, when cloned from Github:
+
+   ```shell
+   asciidoctor-pdf \
+      -r <Your cloned directory, or container internal directory>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb \
+      mathdoc.adoc \
+      -o mathdoc.pdf
+   ```
+
+   Or, if using the RubyGems version:
+
    ```shell
    asciidoctor-pdf \
       -r asciidoctor-pdf-mathjax \
@@ -152,19 +188,11 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
       -o mathdoc.pdf
    ```
 
-   Or, if cloned from GitHub:
-
-   ```shell
-   asciidoctor-pdf \
-      -r <Your Cloned Directory>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb \
-      mathdoc.adoc \
-      -o mathdoc.pdf
-   ```
-
-   - `-a math-cache-dir=<Your Cache Dir>`: Specifies where you want the SVG images to be cached.
    - Load the extension, depending on where you got it from:
-     - `-r asciidoctor-pdf-mathjax`: Loads the extension if installed from RubyGems.
-     - `-r <Your Cloned Directory>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb`: Loads the local GitHub clone.
+     - `-r <Container internal directory>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb`: Loads the local GitHub clone, where you have it mounted within the container (e.g. `/extensions/').
+     - `-r <Your cloned directory>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb`: Loads the local GitHub clone if you are running asciidoctor-pdf directly from your file system.
+     - `-r asciidoctor-pdf-mathjax`: Loads the extension if installed from RubyGems, whether that's installed in a
+       Docker/Podman container, or on your local system.
    - `mathdoc.adoc`: The input AsciiDoc file.
    - `-o mathdoc.pdf`: The output PDF file.
 
@@ -173,8 +201,8 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
 
 #### Notes
 
-- The `:stem:` attribute must be set in the document header or via the `-a stem` flag to enable STEM processing.
-- The `:math-cache-dir: <Cache Dir>` must be set in the document header, or via the `-a math-cache-dir=<Cache Dir>` command line attribute.
+- The `:stem:` attribute must be set in the document header, or via the `-a stem` flag, to enable STEM processing.
+- The `:math-cache-dir: <Cache Dir>` must be set in the document header, or via the `-a math-cache-dir=<Cache Dir>` command line attribute, for any SVG image caching to take place.
 - Both inline (`stem:[...]` or `latexmath:[...]`) and block (`[stem]`) STEM content are supported.
 - Ensure your system has internet access during the first run, as MathJax may need to fetch resources required for
   rendering MathJax and LaTeX (subsequent runs can work offline).
@@ -183,7 +211,7 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
   failures during the rendering process. Issues with specific stem blocks, that aren't
   outright crashes of this extension, indicate a peculiarity with the LaTeX notation you have used that is preventing it
   from being understood, and thus it can't be rendered as an SVG image and embedded into the final PDF.  Check your notation
-  for minor issues you may have overlooked.
+  for any minor issues you may have overlooked.
 
 #### Supported Fonts
 
