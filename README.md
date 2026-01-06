@@ -22,11 +22,37 @@ formatted equations in the resulting PDF.
 - **Support for Inline and Block Equations**: Render both [inline](https://docs.asciidoctor.org/asciidoc/latest/stem/#inline) and [block](https://docs.asciidoctor.org/asciidoc/latest/stem/#block) STEM content effortlessly.
 - **High Quality STEM Rendering**: Utilizes MathJax’s powerful rendering engine to produce high-quality STEM content in
   PDF output.
-- Cached SVG files (when configured) to ensure rapid .adoc build times.
+- Cached SVG files (when configured) to ensure rapid PDF build times.
 
-## Installation Using Docker
+## Installation From GitHub (Recommended)
 
-Using the following Dockerfile with Docker or Podman to build a ready-to-go image
+1. Clone the repository to your HDD.
+1. To use this extension with Asciidoctor-PDF you must require the ruby file on the command line when running asciidoctor-pdf with `-r <Clone Location>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb` file.
+
+This completely replaces the `-r asciidoctor-pdf-mathjax` argument, so remove this from the asciidoctor-pdf command arguments if you've been using an older version of asciidoctor-pdf-mathjax.
+
+The easiest way to get up and running with a working asciidoctor-pdf, and dependencies required for the asciidoctor-pdf-mathjax extension, is to use the AsciiDoctor-PDF Docker image along with Docker or Podman:
+
+```Dockerfile
+FROM asciidoctor/docker-asciidoctor:1.82
+
+WORKDIR /documents
+
+RUN apk add --upgrade nodejs npm
+RUN npm install -g mathjax-node
+ENV NODE_PATH=/usr/local/lib/node_modules
+
+ENTRYPOINT ["bash", "-c", "exec \"$@\"", "--"]
+```
+
+This Dockerfile does not install the RubyGems version of asciidoctor-pdf-mathjax, because we are cloning the extension directly from GitHub instead.
+
+## Installation Using Docker And RubyGems
+
+Using the following Dockerfile with Docker or Podman to build a ready-to-go image.
+
+> [!WARNING]
+> If the RubyGems version of this project hasn't been updated yet to include caching use the GitHub installation procedure instead.
 
 ```Dockerfile
 FROM asciidoctor/docker-asciidoctor:1.82
@@ -48,6 +74,9 @@ podman build -t <Your Image Name>
 ```
 
 ## Installation (Manual Setup)
+
+This can be used only if the asciidoctor-pdf-mathjax gem has been updated in the RubyGems repository.  If an older version is
+still there then the caching feature will be absent.
 
 ### Prerequisites
 
@@ -85,7 +114,7 @@ You can find an example of a docker container configuration for Asciidoctor PDF 
 
 ## Usage
 
-To use asciidoctor-pdf-mathjax, you need to require it as an extension when running asciidoctor-pdf and ensure your
+To use asciidoctor-pdf-mathjax you need to require it as an extension when running asciidoctor-pdf, and ensure your
 AsciiDoc document specifies the `:stem:` attribute.
 
 ### Example Asciidoctor PDF Call
@@ -98,6 +127,8 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
    :stem:
    :math-cache-dir: <Your Cache Dir>
 
+   //End of heading and attribute settings.
+
    This document includes an equation: stem:[E = mc^2].
 
    [stem]
@@ -107,24 +138,33 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
    ```
 
 > [!IMPORTANT]
-> Don't forget to set the cache directory attribute to a location on your HDD where you want the cached SVG image files to live.  Without this attribute set the SVG images temporary, regenerated each time you build your adoc file, and then destroyed once the SVG data has been embedded into the output PDF.
->
-> Also, be aware that the first blank line signals the end of the header/settings.  Ensure any attributes you wish to
-> set for your adoc are all above the first blank line.
+> Don't forget to set the cache directory attribute to a location on your HDD where you want the cached SVG image files to live.  Without this attribute set the SVG images are regenerated each time you build your PDF, and then destroyed once the SVG data has been embedded into the PDF.
+
+> [!TIP]
+> Be aware that the first blank line in an ADoc file signals the end of the header/settings.  Ensure any attributes you wish to
+> set for your ADoc project are all above the first blank line.
 
 2. Run the `asciidoctor-pdf` command with the extension:
    ```shell
-   asciidoctor-pdf -r asciidoctor-pdf-mathjax mathdoc.adoc -o mathdoc.pdf
+   asciidoctor-pdf \
+      -r asciidoctor-pdf-mathjax \
+      mathdoc.adoc \
+      -o mathdoc.pdf
    ```
 
-   You can also set the cache directory attribute on the command line, instead of within the adoc file:
+   Or, if cloned from GitHub:
 
    ```shell
-   asciidoctor-pdf -a math-cache-dir=<Your Cache Dir> -r asciidoctor-pdf-mathjax mathdoc.adoc -o mathdoc.pdfj
+   asciidoctor-pdf \
+      -r <Your Cloned Directory>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb \
+      mathdoc.adoc \
+      -o mathdoc.pdf
    ```
 
    - `-a math-cache-dir=<Your Cache Dir>`: Specifies where you want the SVG images to be cached.
-   - `-r asciidoctor-pdf-mathjax`: Loads the extension.
+   - Load the extension, depending on where you got it from:
+     - `-r asciidoctor-pdf-mathjax`: Loads the extension if installed from RubyGems.
+     - `-r <Your Cloned Directory>/asciidoctor-pdf-mathjax/lib/asciidoctor-pdf-mathjax.rb`: Loads the local GitHub clone.
    - `mathdoc.adoc`: The input AsciiDoc file.
    - `-o mathdoc.pdf`: The output PDF file.
 
@@ -134,6 +174,7 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
 #### Notes
 
 - The `:stem:` attribute must be set in the document header or via the `-a stem` flag to enable STEM processing.
+- The `:math-cache-dir: <Cache Dir>` must be set in the document header, or via the `-a math-cache-dir=<Cache Dir>` command line attribute.
 - Both inline (`stem:[...]` or `latexmath:[...]`) and block (`[stem]`) STEM content are supported.
 - Ensure your system has internet access during the first run, as MathJax may need to fetch resources required for
   rendering MathJax and LaTeX (subsequent runs can work offline).
