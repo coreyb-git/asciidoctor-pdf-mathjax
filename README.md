@@ -22,8 +22,32 @@ formatted equations in the resulting PDF.
 - **Support for Inline and Block Equations**: Render both [inline](https://docs.asciidoctor.org/asciidoc/latest/stem/#inline) and [block](https://docs.asciidoctor.org/asciidoc/latest/stem/#block) STEM content effortlessly.
 - **High Quality STEM Rendering**: Utilizes MathJax’s powerful rendering engine to produce high-quality STEM content in
   PDF output.
+- Cached SVG files (when configured) to ensure rapid .adoc build times.
 
-## Installation
+## Installation Using Docker
+
+Using the following Dockerfile with Docker or Podman to build a ready-to-go image
+
+```Dockerfile
+FROM asciidoctor/docker-asciidoctor:1.82
+
+WORKDIR /documents
+
+RUN apk add --upgrade nodejs npm
+RUN npm install -g mathjax-node
+ENV NODE_PATH=/usr/local/lib/node_modules
+RUN gem install asciidoctor-pdf-mathjax
+
+ENTRYPOINT ["bash", "-c", "exec \"$@\"", "--"]
+```
+
+To build the image with Podman:
+
+```sh
+podman build -t <Your Image Name>
+```
+
+## Installation (Manual Setup)
 
 ### Prerequisites
 
@@ -72,6 +96,7 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
    ```asciidoc
    = Document with Math
    :stem:
+   :math-cache-dir: <Your Cache Dir>
 
    This document includes an equation: stem:[E = mc^2].
 
@@ -81,10 +106,24 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
    ++++
    ```
 
+> [!IMPORTANT]
+> Don't forget to set the cache directory attribute to a location on your HDD where you want the cached SVG image files to live.  Without this attribute set the SVG images temporary, regenerated each time you build your adoc file, and then destroyed once the SVG data has been embedded into the output PDF.
+>
+> Also, be aware that the first blank line signals the end of the header/settings.  Ensure any attributes you wish to
+> set for your adoc are all above the first blank line.
+
 2. Run the `asciidoctor-pdf` command with the extension:
    ```shell
    asciidoctor-pdf -r asciidoctor-pdf-mathjax mathdoc.adoc -o mathdoc.pdf
    ```
+
+   You can also set the cache directory attribute on the command line, instead of within the adoc file:
+
+   ```shell
+   asciidoctor-pdf -a math-cache-dir=<Your Cache Dir> -r asciidoctor-pdf-mathjax mathdoc.adoc -o mathdoc.pdfj
+   ```
+
+   - `-a math-cache-dir=<Your Cache Dir>`: Specifies where you want the SVG images to be cached.
    - `-r asciidoctor-pdf-mathjax`: Loads the extension.
    - `mathdoc.adoc`: The input AsciiDoc file.
    - `-o mathdoc.pdf`: The output PDF file.
@@ -96,15 +135,28 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
 
 - The `:stem:` attribute must be set in the document header or via the `-a stem` flag to enable STEM processing.
 - Both inline (`stem:[...]` or `latexmath:[...]`) and block (`[stem]`) STEM content are supported.
-- Ensure your system has internet access during the first run, as MathJax may need to fetch resources (subsequent runs
-  can work offline if cached).
-- The math font can be customized using the `math-font` attribute. (see [MathJax Font Support](https://docs.mathjax.org/en/v4.0/output/fonts.html) for supported fonts)
+- Ensure your system has internet access during the first run, as MathJax may need to fetch resources required for
+  rendering MathJax and LaTeX (subsequent runs can work offline).
+
+#### Supported Fonts
+
+By setting the `:math-font: <Font Name>` attribute in the heading of your adoc file, or with `-a math-font=<Font Name>` on the command line, you can choose the font you prefer.  Available fonts in MathJax v2 are:
+
+- TeX: The default Computer Modern look (like standard LaTeX).
+- STIX-Web: Professional and academic.
+- Asana-Math: Based on the Asana font; a slightly more "ornate" serif style.
+- Neo-Euler: An upright, "hand-drawn" math style (designed by Hermann Zapf).
+- Gyre-Pagella: A Palatino-based math font; very elegant for book publishing.
+- Gyre-Termes: A Times-based math font; very compact.
+- Latin-Modern: A modernized version of the classic TeX Computer Modern.
 
 ## Issues
+
 Found a bug or have a suggestion? Please open an issue on the [GitHub Issues page](https://github.com/Crown0815/asciidoctor-pdf-mathjax/issues).
 
 ### Known Issues
 
+- Inline superscripts crop at the top.  Use block math expressions.
 - High inline math expressions may be cropped at the bottom due to the alignment logic.
   To avoid this, consider using block math expressions.
 - For very high inline math expressions, asciidoctor-pdf will align them to the bottom of the text, which is undesired.
