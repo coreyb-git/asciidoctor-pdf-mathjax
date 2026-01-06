@@ -179,6 +179,12 @@ Here’s how to convert an AsciiDoc file with mathematical content to PDF using 
 - Ensure your system has internet access during the first run, as MathJax may need to fetch resources required for
   rendering MathJax and LaTeX (subsequent runs can work offline).
 
+  Also note that messages emitted on the command line while the asciidoctor-pdf program runs will alert you to any
+  failures during the rendering process. Issues with specific stem blocks, that aren't
+  outright crashes of this extension, indicate a peculiarity with the LaTeX notation you have used that is preventing it
+  from being understood, and thus it can't be rendered as an SVG image and embedded into the final PDF.  Check your notation
+  for minor issues you may have overlooked.
+
 #### Supported Fonts
 
 By setting the `:math-font: <Font Name>` attribute in the heading of your adoc file, or with `-a math-font=<Font Name>` on the command line, you can choose the font you prefer.  Available fonts in MathJax v2 are:
