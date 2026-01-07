@@ -198,7 +198,7 @@ class AsciidoctorPDFExtensions < (Asciidoctor::Converter.for 'pdf')
     # no unlinking here.  unlink after the temp file has been used.
 
     L('returning uncached temp file path, and svg width')
-    { file_path: file_handle.file_path, svg_output: svg_output, svg_width: svg_width,
+    { file_path: file_handle.path, svg_output: svg_output, svg_width: svg_width,
       temp_handle: file_handle }
   end
   # end of patch
