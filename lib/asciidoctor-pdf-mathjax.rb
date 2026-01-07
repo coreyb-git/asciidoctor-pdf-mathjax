@@ -21,7 +21,7 @@ ATTRIBUTE_CACHE_DIR = 'math-cache-dir'
 PREFIX_STEM = 'stem-'
 PREFIX_WIDTH = 'width-' # width cache files
 
-class AsciidoctorPDFExtensions < (Asciidoctor::Converter.for 'pdf')
+class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
   register_for 'pdf'
 
   @tempfiles = []
@@ -29,94 +29,90 @@ class AsciidoctorPDFExtensions < (Asciidoctor::Converter.for 'pdf')
     attr_reader :tempfiles
   end
 
-  ##### patch start
   @@cached_svg_width = {}
   @@cached_svg_output = {}
   @@cache_dir_init_done = false
 
-  def get_hash_key(latex_content, math_font, is_inline)
-    b = (is_inline ? 'true' : 'false')
-    data = latex_content + math_font + b
-    Zlib.adler32(data).to_s(16).freeze
+  def convert_stem(node)
+    arrange_block node do |_|
+      add_dest_for_block node if node.id
+
+      svg_info, = get_svg_info(node, false)
+      svg_output = svg_info[:svg_output]
+      latex_content = svg_info[:latex_content]
+
+      # noinspection RubyResolve
+      code_padding = @theme.code_padding
+      if svg_output == ''
+        # logger.warn "Failed to convert STEM to SVG: #{error} (Fallback to code block)"
+        logger.warn 'Failed to convert STEM to SVG. (Fallback to code block)'
+        pad_box code_padding, node do
+          theme_font :code do
+            typeset_formatted_text [{ text: (guard_indentation latex_content), color: @font_color }],
+                                   (calc_line_metrics @base_line_height),
+                                   bottom_gutter: @bottom_gutters[-1][node]
+          end
+        end
+      else
+        # removed width and temp file code
+
+        begin
+          # removed temp file writing and close
+
+          svg_width = svg_info[:svg_width]
+          file_path = svg_info[:file_path]
+          temp_handle = svg_info[:temp_handle]
+          L('Prawn embed path: ' + file_path)
+          L('Prawn embed width:' + svg_width.to_s)
+
+          pad_box code_padding, node do
+            image_obj = image file_path, position: :center, width: svg_width, height: nil
+            logger.debug "Successfully embedded stem block (as latex) #{latex_content} as SVG image" if image_obj
+          rescue Prawn::Errors::UnsupportedImageType => e
+            logger.warn "Unsupported image type error: #{e.message}"
+          rescue StandardError => e
+            logger.warn "Failed embedding SVG: #{e.message}"
+          end
+        ensure
+          temp_handle.unlink if temp_handle
+        end
+      end
+    end
+    theme_margin :block, :bottom, (next_enclosed_block node)
   end
 
-  def get_adjusted_svg_from_node(node, latex_content, is_inline, math_font)
-    svg_output, error = stem_to_svg(latex_content, is_inline, math_font)
+  def convert_inline_quoted(node)
+    svg_info, error = get_svg_info(node, true)
+    svg_output = svg_info[:svg_output]
+    latex_content = svg_info[:latex_content]
+    return super if latex_content == ''
 
     if svg_output == ''
-      s = "No svg produced when adjusting LaTeX:\n" + latex_content
-      logger.error(s)
-      error = s
+      logger.warn "Error processing stem: #{error || 'No SVG output'}"
+      return super
     end
 
-    return nil, error unless error.nil?
+    # removed svg temp file handle creation
 
-    if !is_inline
-      svg_output = adjust_svg_color(svg_output, @font_color)
-      svg_default_font_size = FALLBACK_FONT_SIZE
+    begin
+      # removed writing of adjusted svg, and closing of handle
 
-      svg_doc = REXML::Document.new(svg_output)
-      svg_width = (svg_doc.root.attributes['width'].to_f * POINTS_PER_EX) || raise('No width found in SVG')
+      file_path = svg_info[:file_path]
+      svg_width = svg_info[:svg_width]
+      math_font = get_math_font(node).freeze
 
-      scaling_factor = @font_size.to_f / svg_default_font_size
-      svg_width *= scaling_factor
-
-      [svg_output: svg_output, svg_width: svg_width]
-    else
-      theme = (load_theme node.document)
-      svg_output, svg_width = adjust_svg_to_match_text(svg_output, node, theme)
-      [svg_output: svg_output, svg_width: svg_width]
+      if error.nil?
+        logger.debug "Successfully embedded stem inline #{node.text} with font #{math_font} as SVG image"
+        quoted_text = "<img src=\"#{file_path}\" format=\"svg\" width=\"#{svg_width}\" alt=\"#{node.text}\">"
+        node.id ? %(<a id="#{node.id}">#{DummyText}</a>#{quoted_text}) : quoted_text
+      end
+    rescue StandardError => e
+      logger.warn "Failed to process SVG: #{e.message}"
+      super
     end
   end
 
-  def get_adjusted_svg_and_set_cached_width(node, latex_content, is_inline, math_font, hash_key)
-    adjusted_svg, error = get_adjusted_svg_from_node(node, latex_content, is_inline, math_font)
-
-    return nil, error unless error.nil?
-
-    @@cached_svg_width[hash_key] = adjusted_svg[:svg_width]
-
-    adjusted_svg
-  end
-
-  def get_cached_svg_file_path(cache_dir, hash_key)
-    File.join(cache_dir, PREFIX_STEM + hash_key + '.svg')
-  end
-
-  def get_cached_svg_width_path(cache_dir, hash_key)
-    File.join(cache_dir, PREFIX_WIDTH + hash_key)
-  end
-
-  def get_cached_svg_width(cache_dir, hash_key)
-    unless @@cached_svg_width[hash_key] # not cached; read from file
-      file_name = get_cached_svg_width_path(cache_dir, hash_key)
-      svg_width = File.read(file_name).to_f
-      L('Returning cached file width: ' + svg_width.to_s + ' for hash_key: ' + hash_key)
-      @@cached_svg_width[hash_key] = svg_width.freeze
-    end
-
-    svg_width = @@cached_svg_width[hash_key]
-    L('Returning cached ram width: ' + svg_width.to_s + ' for hash_key: ' + hash_key)
-    svg_width
-  end
-
-  def get_cached_svg_output(cache_dir, hash_key)
-    unless @@cached_svg_output[hash_key] # read from file
-      file_name = get_cached_svg_file_path(cache_dir, hash_key)
-      svg_content = File.read(file_name)
-      @@cached_svg_output[hash_key] = svg_content.freeze
-    end
-
-    @@cached_svg_output[hash_key]
-  end
-
-  def get_math_font(node)
-    node.document.attributes[ATTRIBUTE_FONT] || MATHJAX_DEFAULT_FONT_FAMILY
-  end
-
-  def L(debug_text)
-    logger.debug('PATCH: ' + debug_text)
-  end
+  protected
 
   # return {file_path, svg_width, temp_handle, inline_nil_latex, inline_nil_svg}
   def get_svg_info(node, is_inline)
@@ -201,88 +197,92 @@ class AsciidoctorPDFExtensions < (Asciidoctor::Converter.for 'pdf')
     { file_path: file_handle.path, svg_output: svg_output, svg_width: svg_width,
       temp_handle: file_handle }
   end
-  # end of patch
-
-  def convert_stem(node)
-    arrange_block node do |_|
-      add_dest_for_block node if node.id
-
-      svg_info, error = get_svg_info(node, false)
-      svg_output = svg_info[:svg_output]
-      latex_content = svg_info[:latex_content]
-
-      # noinspection RubyResolve
-      code_padding = @theme.code_padding
-      if svg_output == ''
-        # logger.warn "Failed to convert STEM to SVG: #{error} (Fallback to code block)"
-        logger.warn 'Failed to convert STEM to SVG. (Fallback to code block)'
-        pad_box code_padding, node do
-          theme_font :code do
-            typeset_formatted_text [{ text: (guard_indentation latex_content), color: @font_color }],
-                                   (calc_line_metrics @base_line_height),
-                                   bottom_gutter: @bottom_gutters[-1][node]
-          end
-        end
-      else
-        # removed width and temp file code
-
-        begin
-          # removed temp file writing and close
-
-          svg_width = svg_info[:svg_width]
-          file_path = svg_info[:file_path]
-          temp_handle = svg_info[:temp_handle]
-          L('Prawn embed path: ' + file_path)
-          L('Prawn embed width:' + svg_width.to_s)
-
-          pad_box code_padding, node do
-            image_obj = image file_path, position: :center, width: svg_width, height: nil
-            logger.debug "Successfully embedded stem block (as latex) #{latex_content} as SVG image" if image_obj
-          rescue Prawn::Errors::UnsupportedImageType => e
-            logger.warn "Unsupported image type error: #{e.message}"
-          rescue StandardError => e
-            logger.warn "Failed embedding SVG: #{e.message}"
-          end
-        ensure
-          temp_handle.unlink if temp_handle
-        end
-      end
-    end
-    theme_margin :block, :bottom, (next_enclosed_block node)
-  end
-
-  def convert_inline_quoted(node)
-    svg_info, error = get_svg_info(node, true)
-    svg_output = svg_info[:svg_output]
-    latex_content = svg_info[:latex_content]
-    return super if latex_content == ''
-
-    if svg_output == ''
-      logger.warn "Error processing stem: #{error || 'No SVG output'}"
-      return super
-    end
-
-    # removed svg temp file handle creation
-
-    begin
-      # removed writing of adjusted svg, and closing of handle
-
-      file_path = svg_info[:file_path]
-      svg_width = svg_info[:svg_width]
-      math_font = get_math_font(node).freeze
-
-      if error.nil?
-        logger.debug "Successfully embedded stem inline #{node.text} with font #{math_font} as SVG image"
-        quoted_text = "<img src=\"#{file_path}\" format=\"svg\" width=\"#{svg_width}\" alt=\"#{node.text}\">"
-        node.id ? %(<a id="#{node.id}">#{DummyText}</a>#{quoted_text}) : quoted_text
-      end
-    rescue StandardError => e
-      logger.warn "Failed to process SVG: #{e.message}"
-      super
-    end
-  end
 
   private
+
+  def get_hash_key(latex_content, math_font, is_inline)
+    b = (is_inline ? 'true' : 'false')
+    data = latex_content + math_font + b
+    Zlib.adler32(data).to_s(16).freeze
+  end
+
+  def get_adjusted_svg_from_node(node, latex_content, is_inline, math_font)
+    svg_output, error = stem_to_svg(latex_content, is_inline, math_font)
+
+    if svg_output == ''
+      s = "No svg produced when adjusting LaTeX:\n" + latex_content
+      logger.error(s)
+      error = s
+    end
+
+    return nil, error unless error.nil?
+
+    if !is_inline
+      svg_output = adjust_svg_color(svg_output, @font_color)
+      svg_default_font_size = FALLBACK_FONT_SIZE
+
+      svg_doc = REXML::Document.new(svg_output)
+      svg_width = (svg_doc.root.attributes['width'].to_f * POINTS_PER_EX) || raise('No width found in SVG')
+
+      scaling_factor = @font_size.to_f / svg_default_font_size
+      svg_width *= scaling_factor
+
+      [svg_output: svg_output, svg_width: svg_width]
+    else
+      theme = (load_theme node.document)
+      svg_output, svg_width = adjust_svg_to_match_text(svg_output, node, theme)
+      [svg_output: svg_output, svg_width: svg_width]
+    end
+  end
+
+  def get_adjusted_svg_and_set_cached_width(node, latex_content, is_inline, math_font, hash_key)
+    adjusted_svg, error = get_adjusted_svg_from_node(node, latex_content, is_inline, math_font)
+
+    return nil, error unless error.nil?
+
+    @@cached_svg_width[hash_key] = adjusted_svg[:svg_width]
+
+    adjusted_svg
+  end
+
+  def get_cached_svg_file_path(cache_dir, hash_key)
+    File.join(cache_dir, PREFIX_STEM + hash_key + '.svg')
+  end
+
+  def get_cached_svg_width_path(cache_dir, hash_key)
+    File.join(cache_dir, PREFIX_WIDTH + hash_key)
+  end
+
+  def get_cached_svg_width(cache_dir, hash_key)
+    unless @@cached_svg_width[hash_key] # not cached; read from file
+      file_name = get_cached_svg_width_path(cache_dir, hash_key)
+      svg_width = File.read(file_name).to_f
+      L('Returning cached file width: ' + svg_width.to_s + ' for hash_key: ' + hash_key)
+      @@cached_svg_width[hash_key] = svg_width.freeze
+    end
+
+    svg_width = @@cached_svg_width[hash_key]
+    L('Returning cached ram width: ' + svg_width.to_s + ' for hash_key: ' + hash_key)
+    svg_width
+  end
+
+  def get_cached_svg_output(cache_dir, hash_key)
+    unless @@cached_svg_output[hash_key] # read from file
+      file_name = get_cached_svg_file_path(cache_dir, hash_key)
+      svg_content = File.read(file_name)
+      @@cached_svg_output[hash_key] = svg_content.freeze
+    end
+
+    @@cached_svg_output[hash_key]
+  end
+
+  def get_math_font(node)
+    node.document.attributes[ATTRIBUTE_FONT] || MATHJAX_DEFAULT_FONT_FAMILY
+  end
+
+  def L(debug_text)
+    logger.debug('PATCH: ' + debug_text)
+  end
 
   def extract_latex_content(content, type)
     content = content.strip.gsub('&amp;', '&').gsub('&lt;', '<').gsub('&gt;', '>')
@@ -459,7 +459,7 @@ class AsciidoctorPDFExtensions < (Asciidoctor::Converter.for 'pdf')
 end
 
 puts("\n")
-puts('-- PATCHED with caching AsciiDoctor-PDF-MathJax extension loaded --')
+puts('-- PATCHED with caching version of AsciiDoctor-PDF-MathJax extension loaded --')
 puts("\n")
 puts('To enable caching either: a) Add to your .adoc file header the attribute :' + ATTRIBUTE_CACHE_DIR + ': <Your Cache Directory>')
 puts('Or, b) Add to the AsciiDoctor-PDF command line: -a ' + ATTRIBUTE_CACHE_DIR + '=<Your Cache Directory>')
