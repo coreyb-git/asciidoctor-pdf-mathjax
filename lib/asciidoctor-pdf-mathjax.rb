@@ -5,7 +5,7 @@ require 'rexml/document'
 require 'ttfunk'
 require 'asciimath'
 
-require 'zlib'
+require 'digest'
 
 POINTS_PER_EX = 6
 MATHJAX_DEFAULT_COLOR_STRING = 'currentColor'
@@ -203,7 +203,7 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
   def get_hash_key(latex_content, math_font, is_inline)
     b = (is_inline ? 'true' : 'false')
     data = latex_content + math_font + b
-    Zlib.adler32(data).to_s(16).freeze
+    Digest::MD5.hexdigest(data).freeze
   end
 
   def get_adjusted_svg_from_node(node, latex_content, is_inline, math_font)
