@@ -249,6 +249,10 @@ To set up your development environment to run the test you need to install the f
 - [Ruby](https://www.ruby-lang.org/) 3.4 or higher
 - [NodeJS](https://nodejs.org/en)
 - [diff-pdf](https://github.com/vslavik/diff-pdf)
+- [ruby-minitest](https://github.com/minitest/minitest)
+
+> [!TIP]
+> in the `/test` directory is the script `run_tests.sh` to automate testing.  It creates a Docker/Podman image with diff-pdf and ruby-minitest installed, and then it runs the tests in the `/test` directory.
 
 ## License
 
