@@ -6,6 +6,9 @@
 ![GitHub Issues](https://img.shields.io/github/issues/Crown0815/asciidoctor-pdf-mathjax)
 ![GitHub Release](https://img.shields.io/github/v/release/Crown0815/asciidoctor-pdf-mathjax)
 
+> [!CAUTION]
+> This readme needs an overall to reflex the changes made since updating to MathJax v4.
+
 An extension for [Asciidoctor PDF](https://github.com/asciidoctor/asciidoctor-pdf) that
 integrates [MathJax](https://www.mathjax.org/) to render mathematical expressions in PDF output.
 
