@@ -9,14 +9,15 @@ Minitest::Test = MiniTest::Unit::TestCase unless defined? Minitest::Test
 
 class TestAsciidoctorPdfMathjax < Minitest::Test
   def setup
-    system("npm install --silent mathjax-node")
+    # system("npm install --silent mathjax-node")
+    # v4 requires mathjax-full, but this is overkill when the Dockerfile already ensures it's installed.
 
     Asciidoctor::LoggerManager.logger = Logger.new(STDOUT)
     Asciidoctor::LoggerManager.logger.level = Logger::DEBUG
   end
 
   def teardown
-    system("npm remove --silent mathjax-node")
+    # system("npm remove --silent mathjax-node")
   end
 
   PDF_COMPARISON_DIFFERENT_MESSAGE = 'PDF files are different'
@@ -29,22 +30,26 @@ class TestAsciidoctorPdfMathjax < Minitest::Test
   end
 
   def test_that_conversion_with_custom_font_theme_works
-    verify_conversion_of('stem_latex', {'pdf-theme' => 'custom-font'})
+    verify_conversion_of('stem_latex', { 'pdf-theme' => 'custom-font' })
   end
 
-
-  MATHJAX_FONTS = %w[TeX STIX-Web Asana-Math Neo-Euler Gyre-Pagella Gyre-Termes Latin-Modern]
+  # MATHJAX_FONTS = %w[TeX STIX-Web Asana-Math Neo-Euler Gyre-Pagella Gyre-Termes Latin-Modern]
+  MATHJAX_FONTS = %w[mathjax-newcm]
 
   MATHJAX_FONTS.each do |testcase|
     define_method("test_that_conversion_of_latex_to_math_font_#{testcase}_works") do
-      verify_conversion_of('latex-mini', {'math-font' => testcase})
+      verify_conversion_of('latex-mini', { 'math-font' => testcase })
     end
   end
 
   private
 
   def verify_conversion_of(case_name, extra_attributes = {})
-    attributes_extension = extra_attributes.sort.map { |k, v| "#{k}--#{v.to_s.tr(' ', '_')}" }.join('---') if extra_attributes.any?
+    if extra_attributes.any?
+      attributes_extension = extra_attributes.sort.map do |k, v|
+        "#{k}--#{v.to_s.tr(' ', '_')}"
+      end.join('---')
+    end
     test_case = attributes_extension.nil? ? case_name : "#{case_name}---#{attributes_extension}"
     received_pdf_file = "./test/verification/#{test_case}.received.pdf"
     verified_pdf_file = "./test/verification/#{test_case}.verified.pdf"
@@ -55,7 +60,8 @@ class TestAsciidoctorPdfMathjax < Minitest::Test
       'root' => "#{Dir.pwd}/test/"
     }
     attributes.merge!(extra_attributes)
-    Asciidoctor.convert adoc_file, to_file: received_pdf_file, safe: :safe, backend: 'pdf', require: 'asciidoctor-pdf-mathjax', attributes: attributes
+    Asciidoctor.convert adoc_file, to_file: received_pdf_file, safe: :safe, backend: 'pdf',
+                                   require: 'asciidoctor-pdf-mathjax', attributes: attributes
 
     assert File.exist?(received_pdf_file), 'PDF file was not created'
     diff_command = "diff-pdf --output-diff=#{diff_file} #{verified_pdf_file} #{received_pdf_file}"
@@ -63,7 +69,7 @@ class TestAsciidoctorPdfMathjax < Minitest::Test
     if diff_result
       assert_equal 0, $?&.exitstatus, PDF_COMPARISON_DIFFERENT_MESSAGE
     elsif diff_result.nil?
-      flunk "diff-pdf is missing, install from https://github.com/vslavik/diff-pdf"
+      flunk 'diff-pdf is missing, install from https://github.com/vslavik/diff-pdf'
     else
       full_diff_path = File.expand_path(diff_file)
       flunk PDF_COMPARISON_DIFFERENT_MESSAGE + " (see file://#{full_diff_path})"

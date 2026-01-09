@@ -6,5 +6,6 @@ podman run \
   --log-driver=none \
   --tmpfs /tmp:rw,size=512m,mode=1777 \
   -v "$(pwd)/../":/documents/:z \
+  -v "$(pwd)/mathcache":/mathcache/:Z \
   run_ruby_tests_image \
   sh -c 'ruby test/test_*.rb'

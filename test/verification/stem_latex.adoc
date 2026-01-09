@@ -48,6 +48,10 @@ c &< \text{text3}
 
 === Inline
 
+PATCH 1: stem:[\vec A] stem:[\int] stem:[\sqrt{H}] stem:[N^9] stem:[g_g]
+
+PATCH 2: stem:[\int_y^H \vec A \int \sqrt{H} N^9 g_g]
+
 Example: stem:[x^2]
 
 Example: stem:[x_1^2]

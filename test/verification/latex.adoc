@@ -47,6 +47,10 @@ c &< \text{text3}
 
 === Inline
 
+PATCH 1: latexmath:[\vec A] latexmath:[\int] latexmath:[\sqrt{H}] latexmath:[N^9] latexmath:[g_g]
+
+PATCH 2: latexmath:[\int_y^H \vec A \int \sqrt{H} N^9 g_g]
+
 Example 1: latexmath:[x^2]
 
 Example 2: latexmath:[y^2]

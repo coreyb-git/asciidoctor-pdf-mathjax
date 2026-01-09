@@ -12,3 +12,5 @@ E = mc^2
 == Inline
 
 latexmath:[E = mc^2]
+
+latexmath:[\vec A] latexmath:[\sqrt{H}]

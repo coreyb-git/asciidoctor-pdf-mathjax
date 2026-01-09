@@ -37,6 +37,10 @@ sum_(i=1)^n i^3=((n(n+1))/2)^2
 
 === Inline
 
+PATCH 1: asciimath:[\vec A] asciimath:[\int] asciimath:[\sqrt{H}] asciimath:[N^9] asciimath:[g_g]
+
+PATCH 2: asciimath:[\int_y^H \vec A \int \sqrt{H} N^9 g_g]
+
 Example 1: asciimath:[x^2]
 
 Example 2: asciimath:[y^2]
