@@ -73,7 +73,7 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
         logger.warn 'Failed to convert STEM to SVG. (Fallback to code block)'
         pad_box code_padding, node do
           theme_font :code do
-            typeset_formatted_text [{ text: (guard_indentation latex_content), color: @font_color }],
+            typeset_formatted_text [{ text: (guard_indentation svg_result.latex_content), color: @font_color }],
                                    (calc_line_metrics @base_line_height),
                                    bottom_gutter: @bottom_gutters[-1][node]
           end
@@ -207,12 +207,13 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     # no caching, use original Tempfile method.
     L('no caching.  writing to tempfile')
     r.temp_file_handle = Tempfile.new([PREFIX_STEM, '.svg'])
+    r.svg_file_path = r.temp_file_handle.path
     self.class.tempfiles << r.temp_file_handle
-    file_handle.write(r.svg_output)
-    file_handle.close
+    r.temp_file_handle.write(svg_output)
+    r.temp_file_handle.close
     # no unlinking here.  unlink after the temp file has been used.
 
-    L('returning uncached temp file path, and svg width')
+    L("returning uncached temp file path: #{r.svg_file_path}, and svg width: #{r.svg_width}")
     r
   end
 
@@ -270,7 +271,7 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
   # Calculate width of final SVG image for display at the surrounding font height.
   def get_scaled_svg_width(node, viewbox_width, is_inline)
-    L('vbox width: ' + viewbox_width.to_s)
+    L('viewbox width is: ' + viewbox_width.to_s)
 
     ex_width = viewbox_width / 500 # MathJax v4 approximate/generalized conversion.
     svg_point_width = ex_width * POINTS_PER_EX # scale to 1pt.
@@ -316,7 +317,7 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     if is_inline
       ##### Correct any abnormally tall viewbox's and normalize the height.
       init_calibrated_svg_viewbox_y_values
-      if v_y > @@calibrated_svg_viewbox_start_y
+      if v_y < @@calibrated_svg_viewbox_start_y # negative values, so oversize means less than
         logger.warn("PATCH: Inline stem box was oversize.  The SVG viewbox has been resized, shaving the excess.  STEM: #{latex_content}")
         L("CALIBRATION from viewbox y: #{v_y} to: #{@@calibrated_svg_viewbox_start_y} for LaTeX: #{latex_content}")
         v_y = @@calibrated_svg_viewbox_start_y
