@@ -2,7 +2,7 @@
 :pdf-themesdir: {root}/theme
 :imagesdir: {root}/media
 :pdf-fontsdir: {root}/fonts
-:math-debug: 1
+:math-debug: 0
 //Here just for the ease of toggling to run a manual cache test.
 //Otherwise a bad idea as the pdf diff will keep getting the same SVG's embedded into the verification files.
 //:math-cache-dir: /mathcache/files
