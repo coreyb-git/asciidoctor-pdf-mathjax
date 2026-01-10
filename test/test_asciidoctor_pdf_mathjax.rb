@@ -11,6 +11,7 @@ class TestAsciidoctorPdfMathjax < Minitest::Test
   def setup
     # system("npm install --silent mathjax-node")
     # v4 requires mathjax-full, but this is overkill when the Dockerfile already ensures it's installed.
+    # Also added to the GitHub actions yaml.
 
     Asciidoctor::LoggerManager.logger = Logger.new(STDOUT)
     Asciidoctor::LoggerManager.logger.level = Logger::DEBUG
