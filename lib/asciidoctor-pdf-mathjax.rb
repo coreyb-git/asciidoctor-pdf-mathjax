@@ -31,7 +31,8 @@ PREFIX_WIDTH = 'width-' # width cache files
 # Removing that padding re-aligns everything.
 # #### CAUTION:
 # This will shave the bottom of an integral if it has a super and sub scripts.
-VPHANTOM_BASE = 'H_{H_H}I^{I^I}'
+# VPHANTOM_BASE = 'H_{H_H}I^{I^I}'
+VPHANTOM_BASE = 'H_{H_H} I^{I^I}'
 VPHANTOM_LATEX = '\vphantom{' + VPHANTOM_BASE + '}'
 #####
 
@@ -53,8 +54,11 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
   @@cached_svg_viewbox_width = {}
   @@cache_dir_init_done = false
 
-  @@calibrated_svg_viewbox_start_y = nil
-  @@calibrated_svg_viewbox_height = nil
+  # Proportions of viewbox y values above and below y=0
+  @@calibrated_svg_portion_neg = nil
+  @@calibrated_svg_portion_pos = nil
+  @@calibrated_svg_ratio_pos_per_min = nil
+  @@calibrated_svg_ratio_neg_per_pos = nil
 
   def convert_stem(node)
     arrange_block node do |_|
@@ -152,6 +156,8 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
     return r, nil if temp_latex_content.nil?
 
+    L("+++ Processing LaTeX: \n#{temp_latex_content}")
+
     if is_inline
       # Normalize inline SVG alignment of characters
       temp_inline = is_debug(node) ? VPHANTOM_BASE : VPHANTOM_LATEX
@@ -195,7 +201,7 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
       L('Writing viewbox width to RAM')
       @@cached_svg_viewbox_width[hash_key] = viewbox_width
 
-      L('Writing svg content and viewbox width to DISK')
+      L("Writing svg content and viewbox width to DISK @  #{r.svg_file_path}")
       File.write(r.svg_file_path, svg_output)
       cached_svg_width_file_path = get_cached_svg_width_path(cache_dir, hash_key)
       File.write(cached_svg_width_file_path, viewbox_width)
@@ -251,9 +257,9 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
   end
 
   def init_calibrated_svg_viewbox_y_values
-    return unless @@calibrated_svg_viewbox_start_y.nil?
+    return unless @@calibrated_svg_portion_neg.nil?
 
-    L('CALIBRATION: Determining normalized viewbox height.')
+    L('CALIBRATION: Determining +- y value proportions in viewbox.')
     latex = VPHANTOM_LATEX + '\text{calibration}'
     font_name = get_math_font_name
     svg_output, = stem_to_svg(latex, font_name, true)
@@ -261,12 +267,19 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     svg_doc = REXML::Document.new(svg_output)
 
     vb = svg_doc.root.attributes['viewBox'].split.map(&:to_f)
-    vb_y = vb[1]
+    vb_y = vb[1] # starting y value.  MathJax starts at a negative y value.
     vb_height = vb[3]
 
-    @@calibrated_svg_viewbox_start_y = vb_y
-    @@calibrated_svg_viewbox_height = vb_height
-    L('CALIBRATION: Normalized viewbox start_y: ' + vb_y.to_s + ' height: ' + vb_height.to_s)
+    portion_pos = vb_height - vb_y.abs
+    portion_neg = vb_y.abs
+
+    @@calibrated_svg_portion_neg = portion_neg
+    @@calibrated_svg_portion_pos = portion_pos
+
+    @@calibrated_svg_ratio_pos_per_min = portion_pos / portion_neg
+    @@calibrated_svg_ratio_neg_per_pos = portion_neg / portion_pos
+
+    L("CALIBRATION: Normalized viewbox proprotions, pos/neg: #{@@calibrated_svg_ratio_pos_per_min}, neg/pos: #{@@calibrated_svg_ratio_neg_per_pos}")
   end
 
   # Calculate width of final SVG image for display at the surrounding font height.
@@ -281,6 +294,7 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
     w = svg_point_width * node_text_ratio * user_scaling
     L('Returning SCALED WIDTH: ' + w.to_s)
+
     w
   end
 
@@ -305,8 +319,8 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     raise('No width found in SVG') if root.attributes['width'].nil?
 
     # Remove fuzzy outline
-    svg_doc.root.attributes['shape-rendering'] = 'geometricPrecision'
-    svg_doc.root.elements.delete_all('style')
+    root.attributes['shape-rendering'] = 'geometricPrecision'
+    root.elements.delete_all('style')
 
     vb = root.attributes['viewBox'].split.map(&:to_f)
     v_x = vb[0]
@@ -317,25 +331,73 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     if is_inline
       ##### Correct any abnormally tall viewbox's and normalize the height.
       init_calibrated_svg_viewbox_y_values
-      if v_y < @@calibrated_svg_viewbox_start_y # negative values, so oversize means less than
-        logger.warn("PATCH: Inline stem box was oversize.  The SVG viewbox has been resized, shaving the excess.  STEM: #{latex_content}")
-        L("CALIBRATION from viewbox y: #{v_y} to: #{@@calibrated_svg_viewbox_start_y} for LaTeX: #{latex_content}")
-        v_y = @@calibrated_svg_viewbox_start_y
-        L("CALIBRATION from viewbox height: #{v_height} to: #{@@calibrated_svg_viewbox_height} for LaTeX: #{latex_content}")
-        v_height = @@calibrated_svg_viewbox_height
 
-        svg_doc.root.attributes['viewBox'] = "#{v_x} #{v_y} #{v_width} #{v_height}"
-        updated_svg_output = ''
-        svg_doc.write(updated_svg_output)
-        svg_output = updated_svg_output
+      portion_pos = v_height - v_y.abs
+      portion_neg = v_y.abs
+
+      # If the negative portion is larger than normal then expand
+      # the positive portion, if it's too small, to re-center image.
+      if portion_neg > @@calibrated_svg_portion_neg
+        L('-- Viewbox Negative portion is larger than normal')
+        pos_per_neg = portion_pos / portion_neg
+        if pos_per_neg < @@calibrated_svg_ratio_pos_per_min
+          L("Adjusting + section of viewbox. Before: #{portion_pos}, height: #{v_height}")
+          portion_pos = portion_neg * @@calibrated_svg_ratio_pos_per_min
+          v_height = portion_neg + portion_pos
+          L("Portion after: #{portion_pos}, height: #{v_height}")
+        end
+
       end
+
+      # If the positive portion is larger, adjust negative portion.
+      if portion_pos > @@calibrated_svg_portion_pos
+        neg_per_pos = portion_neg / portion_pos
+        if neg_per_pos < @@calibrated_svg_ratio_neg_per_pos
+          L("-- Adjusting negative section of viewbox. Portion before: #{portion_neg}, start y: #{v_y}")
+          v_y = 0 - (portion_pos * @@calibrated_svg_ratio_neg_per_pos)
+          portion_neg = v_y.abs
+          v_height = portion_pos + portion_neg
+          L("Portion after: #{portion_neg}, start y: #{v_y}")
+        end
+      end
+
+      # Adjust SVG height
+
+      # overwrite existing values
+      root.add_attributes({
+                            'width' => "#{v_width}ex",
+                            'height' => "#{v_height}ex"
+                          })
+
+      # Vertically center
+      root.add_attributes({ 'style' => 'vertical-align: 0.0ex' })
+
+      # Rewrite the xml with the new viewBox and height values.
+
+      svg_doc.root.attributes['viewBox'] = "#{v_x} #{v_y} #{v_width} #{v_height}"
+      updated_svg_output = ''
+      svg_doc.write(updated_svg_output)
+      svg_output = updated_svg_output
     end
+
+    # 'none' tells the browser/renderer: "Do not maintain the aspect ratio.
+    # Stretch to fit the container exactly."
 
     # Add background if debug
     if is_debug(node)
       L('DEBUG attribute set. Inserting svg background element to highlight svg image.')
 
-      # Create the background/border element
+      horizontal_line = REXML::Element.new('line')
+      horizontal_line.add_attributes({
+                                       'x1' => '0',
+                                       'y1' => '0',
+                                       'x2' => v_width,
+                                       'y2' => '0',
+                                       'stroke' => 'red',
+                                       'stroke-width' => '50'
+                                     })
+      root.add_element(horizontal_line)
+
       bg = REXML::Element.new('rect')
       debug_color = node.document.attributes[ATTRIBUTE_DEBUG_COLOR] || 'beige'
       bg.add_attributes({
@@ -350,6 +412,18 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
       # Insert as the FIRST child so it stays behind the math
       root.insert_before(root.elements[1], bg)
+
+      bg.add_attributes({
+                          'x' => v_x,
+                          'y' => v_y * 100,
+                          'width' => v_width,
+                          'height' => v_height * 10_000,
+                          'fill' => debug_color,
+                          'stroke' => 'black',
+                          'stroke-width' => '10'
+                        })
+      root.insert_before(root.elements[1], bg)
+
       updated_svg_output = ''
       svg_doc.write(updated_svg_output)
       svg_output = updated_svg_output
