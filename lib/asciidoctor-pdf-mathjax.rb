@@ -10,36 +10,54 @@ require 'digest'
 POINTS_PER_EX = 6
 REFERENCE_FONT_SIZE = 12
 
-MATHJAX_DEFAULT_COLOR_STRING = 'currentColor'
-MATHJAX_DEFAULT_FONT_FAMILY = 'mathjax-newcm'
+MATHJAX_DEFAULT_COLOR_STRING = 'currentColor'.freeze
+MATHJAX_DEFAULT_FONT_FAMILY = 'mathjax-newcm'.freeze
 
-ATTRIBUTE_FONT = 'math-font'
-ATTRIBUTE_CACHE_DIR = 'math-cache-dir'
+ATTRIBUTE_FONT = 'math-font'.freeze
+ATTRIBUTE_CACHE_DIR = 'math-cache-dir'.freeze
 
-PREFIX_STEM = 'stem-'
-PREFIX_WIDTH = 'width-' # width cache files
+PREFIX_STEM = 'stem-'.freeze
+PREFIX_WIDTH = 'width-'.freeze # viewbox width cache files
 
 ##### Normalize the height of the SVG image. #####
-# Prawn vertically centers the resulting SVG image.
-# This means that vertically imbalanced SVG's will appear to drift up or down
-# in their vertical alignment compared to surrounding text.
-# \vphantom is a LaTeX zero-width invisible glyph.
-# MathJax will only go 2 levels deep in superscripts and subscripts,
-# thus the following text produces the tallest, vertically centered, output SVG.
-# However, capital letter vectors break this, and are slightly taller,
-# with extra padding above the vector arrow.  This causes vertical misalignment.
-# Removing that padding re-aligns everything.
-# #### CAUTION:
-# This will shave the bottom of an integral if it has a super and sub scripts.
-# VPHANTOM_BASE = 'H_{H_H}I^{I^I}'
-VPHANTOM_BASE = 'H_{H_H} I^{I^I}'
-VPHANTOM_LATEX = '\vphantom{' + VPHANTOM_BASE + '}'
+# Prawn vertically centers SVG's, until the bottom of the image reaches the descender height.
+# Therefore, images are centered, or anchored at the descender height.
+# Images that are larger than the distance from the descender to the cap height anchor
+# at the descender height and continue to expand upwards, depending on the content of the SVG.
+# This portion above the ascent overlays the content above it, and does not enforce a gap.
+#
+# EXCEPTION: It is noted that Abstract Headings break this gap rule with the default theme,
+# and they DO enforce a minimum gap between themselves and the content above it.
+# ATM I'm not able to detect if a heading is abstract or not, so the font size inherits from
+# regular headings which is likely different to abstract headings.
+# !!! Don't use LaTeX in abstract headings !!!
+#
+# With the exception of abstract headings, by including vphantom LaTeX that almost perfectly
+# aligns the image between the descent and ascent the normal LaTeX content within the SVG
+# will have its baseline aligned with the surrounding text within the paragraph/heading.
+# Some discrepancies may arise between different fonts, and the heights are not guaranteed to
+# match, but at least the baselines will be close, and standard (no up/down drift depending on
+# the LaTeX).  If the pdf theme font has particularly thick strokes, or is otherwise sized
+# slightly different the scaling attributes can be set to tweak the size of the SVG within
+# the pdf.
+#
+# An integral with brackets at the subscript, and a \vec A as the superscript, seem to perfectly
+# span between the descent and ascent, and aligning y=0 to the baseline, thus normalizing
+# the content, unless the LaTeX has subscripts that go deeper than 3 levels.
+#
+# This is how I understand it, based on observations.
+# - Corey B
+
+VPHANTOM_BASE = '\int_{(y)}^{\vec A}'.freeze
+VPHANTOM_LATEX = "\\vphantom{#{VPHANTOM_BASE}}".freeze
 #####
 
-ATTRIBUTE_DEBUG = 'math-debug'
-ATTRIBUTE_DEBUG_COLOR = 'math-debug-color'
-ATTRIBUTE_INLINE_BODY_SCALE = 'math-inline-body-scale'
-ATTRIBUTE_INLINE_HEADING_SCALE = 'math-inline-heading-scale'
+# Debug set adds background to svg and doesn't hide the vphantom prefix.
+# Debug == 2 doesn't include any phantom text, but still colors.
+ATTRIBUTE_DEBUG = 'math-debug'.freeze
+ATTRIBUTE_DEBUG_COLOR = 'math-debug-color'.freeze
+ATTRIBUTE_INLINE_BODY_SCALE = 'math-inline-body-scale'.freeze
+ATTRIBUTE_INLINE_HEADING_SCALE = 'math-inline-heading-scale'.freeze
 SCALE_INLINE_HEADING_DEFAULT = 1.0
 SCALE_INLINE_BODY_DEFAULT = 1.0
 
@@ -53,12 +71,6 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
   @@cached_svg_viewbox_width = {}
   @@cache_dir_init_done = false
-
-  # Proportions of viewbox y values above and below y=0
-  @@calibrated_svg_portion_neg = nil
-  @@calibrated_svg_portion_pos = nil
-  @@calibrated_svg_ratio_pos_per_min = nil
-  @@calibrated_svg_ratio_neg_per_pos = nil
 
   def convert_stem(node)
     arrange_block node do |_|
@@ -135,10 +147,10 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
   private
 
-  def is_debug(node)
-    return true if node.document.attributes[ATTRIBUTE_DEBUG]
+  def get_debug_level(node)
+    return node.document.attributes[ATTRIBUTE_DEBUG].to_i unless node.document.attributes[ATTRIBUTE_DEBUG].nil?
 
-    false
+    0
   end
 
   def L(debug_text)
@@ -158,15 +170,28 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
     L("+++ Processing LaTeX: \n#{temp_latex_content}")
 
+    debugging = get_debug_level(node)
+
     if is_inline
       # Normalize inline SVG alignment of characters
-      temp_inline = is_debug(node) ? VPHANTOM_BASE : VPHANTOM_LATEX
+      temp_inline = VPHANTOM_LATEX
+
+      case debugging
+      when 1
+        # Show the prefix in the output to view the alignment, and color SVG.
+        temp_inline = VPHANTOM_BASE
+      when 2
+        # Just color the SVG. Don't apply or show phantom prefix.
+        # This reveals the default positioning and boundaries of SVG's.
+        temp_inline = ''
+      end
+
       temp_latex_content = temp_inline + temp_latex_content
     end
 
     r.latex_content = temp_latex_content
 
-    hash_key = get_hash_key(r.latex_content, r.svg_font_name, is_inline)
+    hash_key = get_hash_key(r.latex_content, r.svg_font_name, is_inline, debugging)
 
     cache_dir = get_cache_dir(node)
     unless cache_dir.nil? # caching enabled
@@ -235,9 +260,11 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     extract_latex_content(node_arg1, node_arg2)
   end
 
-  def get_hash_key(latex_content, math_font_name, is_inline)
+  def get_hash_key(latex_content, math_font_name, is_inline, debug_level)
     b = (is_inline ? 'true' : 'false')
-    data = latex_content + math_font_name + b
+    d = 'false'
+    d = debug_level.to_s unless debug_level.nil?
+    data = latex_content + math_font_name + b + d
 
     Digest::MD5.hexdigest(data).freeze
   end
@@ -254,32 +281,6 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     else
       SCALE_INLINE_BODY_DEFAULT
     end
-  end
-
-  def init_calibrated_svg_viewbox_y_values
-    return unless @@calibrated_svg_portion_neg.nil?
-
-    L('CALIBRATION: Determining +- y value proportions in viewbox.')
-    latex = VPHANTOM_LATEX + '\text{calibration}'
-    font_name = get_math_font_name
-    svg_output, = stem_to_svg(latex, font_name, true)
-
-    svg_doc = REXML::Document.new(svg_output)
-
-    vb = svg_doc.root.attributes['viewBox'].split.map(&:to_f)
-    vb_y = vb[1] # starting y value.  MathJax starts at a negative y value.
-    vb_height = vb[3]
-
-    portion_pos = vb_height - vb_y.abs
-    portion_neg = vb_y.abs
-
-    @@calibrated_svg_portion_neg = portion_neg
-    @@calibrated_svg_portion_pos = portion_pos
-
-    @@calibrated_svg_ratio_pos_per_min = portion_pos / portion_neg
-    @@calibrated_svg_ratio_neg_per_pos = portion_neg / portion_pos
-
-    L("CALIBRATION: Normalized viewbox proprotions, pos/neg: #{@@calibrated_svg_ratio_pos_per_min}, neg/pos: #{@@calibrated_svg_ratio_neg_per_pos}")
   end
 
   # Calculate width of final SVG image for display at the surrounding font height.
@@ -328,63 +329,8 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     v_width = vb[2]
     v_height = vb[3]
 
-    if is_inline
-      ##### Correct any abnormally tall viewbox's and normalize the height.
-      init_calibrated_svg_viewbox_y_values
-
-      portion_pos = v_height - v_y.abs
-      portion_neg = v_y.abs
-
-      # If the negative portion is larger than normal then expand
-      # the positive portion, if it's too small, to re-center image.
-      if portion_neg > @@calibrated_svg_portion_neg
-        L('-- Viewbox Negative portion is larger than normal')
-        pos_per_neg = portion_pos / portion_neg
-        if pos_per_neg < @@calibrated_svg_ratio_pos_per_min
-          L("Adjusting + section of viewbox. Before: #{portion_pos}, height: #{v_height}")
-          portion_pos = portion_neg * @@calibrated_svg_ratio_pos_per_min
-          v_height = portion_neg + portion_pos
-          L("Portion after: #{portion_pos}, height: #{v_height}")
-        end
-
-      end
-
-      # If the positive portion is larger, adjust negative portion.
-      if portion_pos > @@calibrated_svg_portion_pos
-        neg_per_pos = portion_neg / portion_pos
-        if neg_per_pos < @@calibrated_svg_ratio_neg_per_pos
-          L("-- Adjusting negative section of viewbox. Portion before: #{portion_neg}, start y: #{v_y}")
-          v_y = 0 - (portion_pos * @@calibrated_svg_ratio_neg_per_pos)
-          portion_neg = v_y.abs
-          v_height = portion_pos + portion_neg
-          L("Portion after: #{portion_neg}, start y: #{v_y}")
-        end
-      end
-
-      # Adjust SVG height
-
-      # overwrite existing values
-      root.add_attributes({
-                            'width' => "#{v_width}ex",
-                            'height' => "#{v_height}ex"
-                          })
-
-      # Vertically center
-      root.add_attributes({ 'style' => 'vertical-align: 0.0ex' })
-
-      # Rewrite the xml with the new viewBox and height values.
-
-      svg_doc.root.attributes['viewBox'] = "#{v_x} #{v_y} #{v_width} #{v_height}"
-      updated_svg_output = ''
-      svg_doc.write(updated_svg_output)
-      svg_output = updated_svg_output
-    end
-
-    # 'none' tells the browser/renderer: "Do not maintain the aspect ratio.
-    # Stretch to fit the container exactly."
-
     # Add background if debug
-    if is_debug(node)
+    if get_debug_level(node) > 0
       L('DEBUG attribute set. Inserting svg background element to highlight svg image.')
 
       horizontal_line = REXML::Element.new('line')
@@ -396,7 +342,8 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
                                        'stroke' => 'red',
                                        'stroke-width' => '50'
                                      })
-      root.add_element(horizontal_line)
+      # root.add_element(horizontal_line)
+      root.insert_before(root.elements[1], horizontal_line)
 
       bg = REXML::Element.new('rect')
       debug_color = node.document.attributes[ATTRIBUTE_DEBUG_COLOR] || 'beige'
@@ -411,17 +358,6 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
                         })
 
       # Insert as the FIRST child so it stays behind the math
-      root.insert_before(root.elements[1], bg)
-
-      bg.add_attributes({
-                          'x' => v_x,
-                          'y' => v_y * 100,
-                          'width' => v_width,
-                          'height' => v_height * 10_000,
-                          'fill' => debug_color,
-                          'stroke' => 'black',
-                          'stroke-width' => '10'
-                        })
       root.insert_before(root.elements[1], bg)
 
       updated_svg_output = ''
@@ -476,7 +412,15 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
   end
 
   def is_node_heading(node)
-    return true if node.parent.context == :section || node.parent.is_a?(Asciidoctor::Section)
+    return false if node.nil?
+
+    # Use &. to safely check context even if parent is nil
+    return true if node.parent&.context == :section
+    return true if node.parent.is_a?(Asciidoctor::Section)
+    return true if node.is_a?(Asciidoctor::Section)
+
+    # Check if the node is the title of its parent safely
+    return true if node.parent&.respond_to?(:title) && (node.parent.title == node.to_s)
 
     false
   end
@@ -548,6 +492,6 @@ puts('-- PATCHED with caching version of AsciiDoctor-PDF-MathJax extension loade
 puts("\n")
 puts('To enable caching either: a) Add to your .adoc file header the attribute :' + ATTRIBUTE_CACHE_DIR + ': <Your Cache Directory>')
 puts('Or, b) Add to the AsciiDoctor-PDF command line: -a ' + ATTRIBUTE_CACHE_DIR + '=<Your Cache Directory>')
-puts('The first build of a file will take the longest because the cache is empty.  Subsequent builds will be significantly faster."')
+puts('The first build of a file will take the longest because the cache is empty.  Subsequent builds will be significantly faster.')
 puts("\n")
 $stdout.flush
