@@ -1,3 +1,11 @@
+# FIXME: Level 0 headings need a different, or no, prefix.  Tall SVG's push Title headings away from the top of the document (no margin?)
+# FIXME: Block stem can encroach into the footer.
+
+# TODO: Add ability to select custom MathJax v4 font.
+# TODO: When Level 0 headings are fixed, generate /test/verification PDF.
+# TODO: Update README.md
+# TODO: Find method used for creating unbreakable images that will migrate to a new page if they reach the footer.
+
 require 'asciidoctor-pdf' unless Asciidoctor::Converter.for 'pdf'
 require 'open3'
 require 'tempfile'
