@@ -7,8 +7,15 @@ require 'asciimath'
 
 require 'digest'
 
+FALLBACK_FONT_SIZE = 12
+FALLBACK_FONT_STYLE = 'normal'
+FALLBACK_FONT_FAMILY = 'Arial'
+FALLBACK_FONT_COLOR = '#000000'
+
 POINTS_PER_EX = 6
 REFERENCE_FONT_SIZE = 12
+
+DEFAULT_FONT_SIZE = 12
 
 MATHJAX_DEFAULT_COLOR_STRING = 'currentColor'.freeze
 MATHJAX_DEFAULT_FONT_FAMILY = 'mathjax-newcm'.freeze
@@ -56,10 +63,13 @@ VPHANTOM_LATEX = "\\vphantom{#{VPHANTOM_BASE}}".freeze
 # Debug == 2 doesn't include any phantom text, but still colors.
 ATTRIBUTE_DEBUG = 'math-debug'.freeze
 ATTRIBUTE_DEBUG_COLOR = 'math-debug-color'.freeze
-ATTRIBUTE_INLINE_BODY_SCALE = 'math-inline-body-scale'.freeze
+
 ATTRIBUTE_INLINE_HEADING_SCALE = 'math-inline-heading-scale'.freeze
+ATTRIBUTE_INLINE_BODY_SCALE = 'math-inline-body-scale'.freeze
+ATTRIBUTE_BODY_SCALE = 'math-body-scale'.freeze
 SCALE_INLINE_HEADING_DEFAULT = 1.0
 SCALE_INLINE_BODY_DEFAULT = 1.0
+SCALE_BODY_DEFAULT = 1.2
 
 class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
   register_for 'pdf'
@@ -178,11 +188,13 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
       case debugging
       when 1
+        # Just color the SVG. Don't show phantom prefix.
+        # This reveals the default positioning and boundaries of SVG's.
+      when 2
         # Show the prefix in the output to view the alignment, and color SVG.
         temp_inline = VPHANTOM_BASE
-      when 2
-        # Just color the SVG. Don't apply or show phantom prefix.
-        # This reveals the default positioning and boundaries of SVG's.
+      when 3
+        # Don't show or apply prefix.  Debug coloring only.
         temp_inline = ''
       end
 
@@ -190,6 +202,8 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     end
 
     r.latex_content = temp_latex_content
+
+    font_data = get_font_from_context(node)
 
     hash_key = get_hash_key(r.latex_content, r.svg_font_name, is_inline, debugging)
 
@@ -205,7 +219,7 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
       if File.exist?(r.svg_file_path)
         viewbox_width = get_cached_svg_viewbox_width(cache_dir, hash_key)
-        r.svg_width = get_scaled_svg_width(node, viewbox_width, is_inline)
+        r.svg_width = get_scaled_svg_width(node, font_data[:font_size], viewbox_width, is_inline)
         L('Returning previously cached file and scaled width.')
         return r
       end
@@ -220,7 +234,7 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     svg_output = adjusted_svg[:svg_output]
     viewbox_width = adjusted_svg[:svg_viewbox_width]
 
-    r.svg_width = get_scaled_svg_width(node, viewbox_width, is_inline)
+    r.svg_width = get_scaled_svg_width(node, font_data[:font_size], viewbox_width, is_inline)
 
     unless cache_dir.nil? # cache to disk the width data
       L('Writing viewbox width to RAM')
@@ -269,29 +283,37 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     Digest::MD5.hexdigest(data).freeze
   end
 
-  def get_user_scaling(node)
-    if is_node_heading(node)
-      if !node.document.attributes[ATTRIBUTE_INLINE_HEADING_SCALE].nil?
-        node.document.attributes[ATTRIBUTE_INLINE_HEADING_SCALE].to_f
+  def get_user_scaling(node, is_inline)
+    if is_inline
+      if is_node_heading(node)
+        if !node.document.attributes[ATTRIBUTE_INLINE_HEADING_SCALE].nil?
+          node.document.attributes[ATTRIBUTE_INLINE_HEADING_SCALE].to_f
+        else
+          SCALE_INLINE_HEADING_DEFAULT
+        end
+      elsif !node.document.attributes[ATTRIBUTE_INLINE_BODY_SCALE].nil?
+        node.document.attributes[ATTRIBUTE_INLINE_BODY_SCALE].to_f
       else
-        SCALE_INLINE_HEADING_DEFAULT
+        SCALE_INLINE_BODY_DEFAULT
       end
-    elsif !node.document.attributes[ATTRIBUTE_INLINE_BODY_SCALE].nil?
-      node.document.attributes[ATTRIBUTE_INLINE_BODY_SCALE].to_f
     else
-      SCALE_INLINE_BODY_DEFAULT
+      unless node.document.attributes[ATTRIBUTE_BODY_SCALE].nil?
+        return node.document.attributes[ATTRIBUTE_BODY_SCALE].to_f
+      end
+
+      SCALE_BODY_DEFAULT
     end
   end
 
   # Calculate width of final SVG image for display at the surrounding font height.
-  def get_scaled_svg_width(node, viewbox_width, is_inline)
+  def get_scaled_svg_width(node, font_size, viewbox_width, is_inline)
     L('viewbox width is: ' + viewbox_width.to_s)
 
     ex_width = viewbox_width / 500 # MathJax v4 approximate/generalized conversion.
     svg_point_width = ex_width * POINTS_PER_EX # scale to 1pt.
-    node_text_ratio = get_node_font_size_s(node, is_inline).to_f / REFERENCE_FONT_SIZE # scale to local font size.
+    node_text_ratio = font_size / REFERENCE_FONT_SIZE.to_f # scale to local font size.
 
-    user_scaling = get_user_scaling(node)
+    user_scaling = get_user_scaling(node, is_inline)
 
     w = svg_point_width * node_text_ratio * user_scaling
     L('Returning SCALED WIDTH: ' + w.to_s)
@@ -414,8 +436,10 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
   def is_node_heading(node)
     return false if node.nil?
 
+    return true if node.parent.context == :section || node.parent.is_a?(Asciidoctor::Section)
+
     # Use &. to safely check context even if parent is nil
-    return true if node.parent&.context == :section
+    return true if node.parent.context == :section
     return true if node.parent.is_a?(Asciidoctor::Section)
     return true if node.is_a?(Asciidoctor::Section)
 
@@ -423,29 +447,6 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     return true if node.parent&.respond_to?(:title) && (node.parent.title == node.to_s)
 
     false
-  end
-
-  def get_node_font_size_s(node, is_inline)
-    theme = (load_theme node.document)
-
-    if is_inline && is_node_heading(node)
-      level = node.parent.level + 1
-      # Try to get the specific size for this heading level (h1, h2, etc.)
-      heading_size = theme["heading_h#{level}_font_size"] || theme.heading_font_size
-      return heading_size.to_s if heading_size
-    end
-
-    # Body text
-    if theme && theme.respond_to?(:base_font_size)
-      theme.base_font_size.to_s
-    elsif node.document.attr('pdf-page-font-size')
-      node.document.attr('pdf-page-font-size')
-    elsif node.document.attr('font-size')
-      node.document.attr('font-size')
-    else
-      # Default size
-      '12'
-    end
   end
 
   def extract_latex_content(content, type)
@@ -484,6 +485,55 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
     svg_output.gsub!(/stroke-width=["'][^"']+["']/, 'stroke-width="0"')
 
     [svg_output, error]
+  end
+
+  def get_font_from_context(node)
+    theme = (load_theme node.document)
+
+    node_context = find_font_context(node)
+    logger.debug "Found font context #{node_context} for node #{node}"
+
+    if node_context.is_a?(Asciidoctor::Section)
+      level = node_context.level.next
+      theme_key = "heading_h#{level}"
+      theme_key = 'abstract_title' if node_context.sectname == 'abstract'
+
+      font_family = theme["#{theme_key}_font_family"] || theme['heading_font_family'] || theme['base_font_family'] || FALLBACK_FONT_FAMILY
+      font_style = theme["#{theme_key}_font_style"] || theme['heading_font_style'] || theme['base_font_style'] || FALLBACK_FONT_STYLE
+      font_size = theme["#{theme_key}_font_size"] || theme['heading_font_size'] || theme['base_font_size'] || FALLBACK_FONT_SIZE
+      font_color = theme["#{theme_key}_font_color"] || theme['heading_font_color'] || theme['base_font_color'] || FALLBACK_FONT_COLOR
+    elsif node_context
+      theme_key = if node_context.parent.is_a?(Asciidoctor::Section) && node_context.parent.sectname == 'abstract'
+                    :abstract
+                  else
+                    :base
+                  end
+
+      font_family = nil
+      font_style = nil
+      font_size = nil
+      font_color = nil
+      converter = node_context.converter
+      converter&.theme_font theme_key do
+        font_family = converter.font_family || FALLBACK_FONT_FAMILY
+        font_style = converter.font_style || FALLBACK_FONT_STYLE
+        font_size = converter.font_size || FALLBACK_FONT_SIZE
+        font_color = converter.font_color || FALLBACK_FONT_COLOR
+      end
+    else
+      raise "No font context found for node #{node}"
+    end
+
+    { font_family: font_family, font_style: font_style, font_size: font_size, font_color: font_color }
+  end
+
+  def find_font_context(node)
+    while node
+      return node unless node.is_a?(Asciidoctor::Inline)
+
+      node = node.parent
+    end
+    node
   end
 end
 
