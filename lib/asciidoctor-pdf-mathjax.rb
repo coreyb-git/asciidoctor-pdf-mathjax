@@ -60,12 +60,21 @@ PREFIX_WIDTH = 'width-'.freeze # viewbox width cache files
 # span between the descent and ascent, and aligning y=0 to the baseline, thus normalizing
 # the content, unless the LaTeX has subscripts that go deeper than 3 levels.
 #
+# EXCEPTION: Fonts like Crimson Pro seem to have a wildly different set of dimensions
+# requiring a different normalization prefix that has a smaller descender area.
+# :math-alt-norm: requests a prefix with a small descender.
+#
 # This is how I understand it, based on observations.
 # - Corey B
 
-VPHANTOM_BASE = '\int_{(y)}^{\vec A}'.freeze
+VPHANTOM_BASE = '\int_{()}^{\vec A}'.freeze
 VPHANTOM_LATEX = "\\vphantom{#{VPHANTOM_BASE}}".freeze
+
+VPHANTOM_ALT_BASE = 'y\int^{I}'.freeze
+VPHANTOM_ALT_LATEX = "\\vphantom{#{VPHANTOM_ALT_BASE}}".freeze
 #####
+
+ATTRIBUTE_ALT_NORM = 'math-alt-norm'
 
 # Debug set adds background to svg and doesn't hide the vphantom prefix.
 # Debug == 2 doesn't include any phantom text, but still colors.
@@ -190,9 +199,16 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
     debugging = get_debug_level(node)
 
+    norm_prefix_hidden = VPHANTOM_LATEX
+    norm_prefix_visible = VPHANTOM_BASE
+    if node.document.attributes[ATTRIBUTE_ALT_NORM]
+      norm_prefix_hidden = VPHANTOM_ALT_LATEX
+      norm_prefix_visible = VPHANTOM_ALT_BASE
+    end
+
     if is_inline
       # Normalize inline SVG alignment of characters
-      temp_inline = VPHANTOM_LATEX
+      temp_inline = norm_prefix_hidden
 
       case debugging
       when 1
@@ -200,9 +216,9 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
         # This reveals the default positioning and boundaries of SVG's.
       when 2
         # Show the prefix in the output to view the alignment, and color SVG.
-        temp_inline = VPHANTOM_BASE
+        temp_inline = norm_prefix_visible
       when 3
-        # Don't show or apply prefix.  Debug coloring only.
+        # Don't apply any prefix. Native alignment instead.  Debug coloring only.
         temp_inline = ''
       end
 
