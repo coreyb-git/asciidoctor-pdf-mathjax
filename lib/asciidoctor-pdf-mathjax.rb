@@ -72,9 +72,12 @@ VPHANTOM_LATEX = "\\vphantom{#{VPHANTOM_BASE}}".freeze
 
 VPHANTOM_ALT_BASE = 'y\int^{I}'.freeze
 VPHANTOM_ALT_LATEX = "\\vphantom{#{VPHANTOM_ALT_BASE}}".freeze
-#####
 
 ATTRIBUTE_ALT_NORM = 'math-alt-norm'
+#####
+
+# Custom prefix
+ATTRIBUTE_CUSTOM_NORM = 'math-custom-norm'
 
 # Debug set adds background to svg and doesn't hide the vphantom prefix.
 # Debug == 2 doesn't include any phantom text, but still colors.
@@ -199,11 +202,16 @@ class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
 
     debugging = get_debug_level(node)
 
+    # Configure the normalization prefix
     norm_prefix_hidden = VPHANTOM_LATEX
     norm_prefix_visible = VPHANTOM_BASE
     if node.document.attributes[ATTRIBUTE_ALT_NORM]
       norm_prefix_hidden = VPHANTOM_ALT_LATEX
       norm_prefix_visible = VPHANTOM_ALT_BASE
+    end
+    if node.document.attributes[ATTRIBUTE_CUSTOM_NORM]
+      norm_prefix_visible = node.document.attributes[ATTRIBUTE_CUSTOM_NORM]
+      norm_prefix_hidden = "\vphantom{#{norm_prefix_hidden}}"
     end
 
     if is_inline
