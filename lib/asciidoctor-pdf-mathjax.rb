@@ -89,7 +89,7 @@ ATTRIBUTE_INLINE_BODY_SCALE = 'math-inline-body-scale'.freeze
 ATTRIBUTE_BODY_SCALE = 'math-body-scale'.freeze
 SCALE_INLINE_HEADING_DEFAULT = 1.0
 SCALE_INLINE_BODY_DEFAULT = 1.0
-SCALE_BODY_DEFAULT = 1.2
+SCALE_BODY_DEFAULT = 1.0
 
 class AsciiDoctorPDFMathjax < (Asciidoctor::Converter.for 'pdf')
   register_for 'pdf'
