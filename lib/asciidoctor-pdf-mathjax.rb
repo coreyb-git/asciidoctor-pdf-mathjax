@@ -16,9 +16,9 @@ require 'asciimath'
 require 'digest'
 
 FALLBACK_FONT_SIZE = 12
-FALLBACK_FONT_STYLE = 'normal'
-FALLBACK_FONT_FAMILY = 'Arial'
-FALLBACK_FONT_COLOR = '#000000'
+FALLBACK_FONT_STYLE = 'normal'.freeze
+FALLBACK_FONT_FAMILY = 'Arial'.freeze
+FALLBACK_FONT_COLOR = '#000000'.freeze
 
 POINTS_PER_EX = 6
 REFERENCE_FONT_SIZE = 12
@@ -92,14 +92,14 @@ SCALE_INLINE_BODY_DEFAULT = 1.0
 SCALE_BODY_DEFAULT = 1.0
 
 module MathjaxToSVGExtension
-  Result_struct = Struct.new(:latex_content, :svg_font_name, :svg_width, :svg_file_path, :temp_file_handle)
+  Result_struct = Struct.new(:latex_content, :svg_font_name, :svg_width, :svg_file_path)
 
   class MathjaxService
     @@cached_svg_viewbox_width = {}
     @@cache_dir_init_done = false
 
     def get_svg_info(node, is_inline)
-      r = Result_struct.new('', '', '', '', nil)
+      r = Result_struct.new('', '', '', '')
 
       r.svg_font_name = get_math_font_name # part of final log when embedding into pdf
 
@@ -192,14 +192,16 @@ module MathjaxToSVGExtension
 
       # no caching, use original Tempfile method.
       L('no caching.  writing to tempfile')
-      r.temp_file_handle = Tempfile.new([PREFIX_STEM, '.svg'])
-      r.svg_file_path = r.temp_file_handle.path
-      self.class.tempfiles << r.temp_file_handle
-      r.temp_file_handle.write(svg_output)
-      r.temp_file_handle.close
+      temp_handle = Tempfile.new([PREFIX_STEM, '.svg'])
+      r.svg_file_path = temp_handle.path
+      temp_handle.write(svg_output)
+      temp_handle.close
+
       # no unlinking here.  unlink after the temp file has been used.
+      (document.attributes['math_tempfiles_handles'] ||= []) << r.temp_file_handle
 
       L("returning uncached temp file path: #{r.svg_file_path}, and svg width: #{r.svg_width}")
+
       r
     end
 
@@ -511,7 +513,7 @@ module MathjaxToSVGExtension
 
         Asciidoctor::LoggerManager.logger.error(error) if error
 
-        # L('Attempting to insert BLOCK SVG.')
+        Asciidoctor::LoggerManager.logger.debug('Attempting to insert BLOCK SVG.')
 
         # 1. Guard against nil path before creating the block
         next unless svg_result && svg_result.svg_file_path
@@ -527,7 +529,7 @@ module MathjaxToSVGExtension
         # The attributes must be nested INSIDE the options hash under the 'attributes' key
         options = {
           'content_model' => :empty,
-          'attributes' => attrs,
+          # 'attributes' => attrs,
           :attributes => attrs
         }
 
@@ -537,15 +539,13 @@ module MathjaxToSVGExtension
         parent = node.parent
         idx = parent.blocks.index(node)
         parent.blocks[idx] = image_block
-
-        svg_result.temp_file_handle.unlink unless svg_result.temp_file_handle.nil?
       end
     end
   end
 
   Asciidoctor::Extensions.register do
-    # This tells Asciidoctor to use your Treeprocessor class
-    treeprocessor BlockProcessor
+    # treeprocessor BlockProcessor
+    treeprocessor MathjaxToSVGExtension::BlockProcessor
   end
 
   # Converters are low-level, however, better-handle inline stem than tree processors.
@@ -563,7 +563,7 @@ module MathjaxToSVGExtension
       return super if svg_result.latex_content == ''
 
       begin
-        # L('Attempting to insert INLINE SVG.')
+        Asciidoctor::LoggerManager.logger.debug('Attempting to insert INLINE SVG.')
         if error.nil?
           Asciidoctor::LoggerManager.logger.debug "Successfully embedded stem inline #{node.text} with font #{svg_result.svg_font_name} as SVG image"
           quoted_text = "<img src=\"#{svg_result.svg_file_path}\" format=\"svg\" width=\"#{svg_result.svg_width}\" alt=\"#{node.text}\">"
