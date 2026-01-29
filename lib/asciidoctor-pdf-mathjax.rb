@@ -515,9 +515,6 @@ module MathjaxToSVGExtension
 
         Asciidoctor::LoggerManager.logger.debug('Attempting to insert BLOCK SVG.')
 
-        # 1. Guard against nil path before creating the block
-        next unless svg_result && svg_result.svg_file_path
-
         attrs = {
           'target' => svg_result.svg_file_path,
           'align' => 'center',
@@ -529,11 +526,9 @@ module MathjaxToSVGExtension
         # The attributes must be nested INSIDE the options hash under the 'attributes' key
         options = {
           'content_model' => :empty,
-          # 'attributes' => attrs,
           :attributes => attrs
         }
 
-        # Now call new with exactly 3 arguments: parent, context, options
         image_block = Asciidoctor::Block.new(node.parent, :image, options)
 
         parent = node.parent
