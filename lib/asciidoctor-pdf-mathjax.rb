@@ -506,11 +506,28 @@ module MathjaxToSVGExtension
   # Tree processors handle block level nodes.
   class BlockProcessor < Asciidoctor::Extensions::Treeprocessor
     def process(document)
-      (document.find_by context: :stem).each do |node|
-        next unless node.style == 'latexmath'
+      # 1. Process the main document body
+      replace_stems_in_node(document)
+
+      # 2. Find all tables and process their cells
+      document.find_by(context: :table).each do |table|
+        table.rows.body.each do |row|
+          row.each do |cell|
+            replace_stems_in_node(cell.inner_document) if cell.style == :asciidoc && cell.inner_document
+          end
+        end
+      end
+      document
+    end
+
+    def replace_stems_in_node(container)
+      # This will now find STEM blocks within the scope of whatever
+      # container (Document or InnerDocument) is passed to it.
+      container.find_by(context: :stem).each do |node|
+        next unless %w[latexmath stem].include?(node.style)
 
         svg_result, error = SERVICE.get_svg_info(node, false)
-
+        # ... your existing logic to create image_block ...
         Asciidoctor::LoggerManager.logger.error(error) if error
 
         Asciidoctor::LoggerManager.logger.debug('Attempting to insert BLOCK SVG.')
@@ -533,7 +550,7 @@ module MathjaxToSVGExtension
 
         parent = node.parent
         idx = parent.blocks.index(node)
-        parent.blocks[idx] = image_block
+        parent.blocks[idx] = image_block if idx
       end
     end
   end
