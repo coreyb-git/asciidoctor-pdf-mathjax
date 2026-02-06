@@ -21,7 +21,12 @@ const isInline = process.argv[3] === 'inline';
 const pixels_per_ex = parseInt(process.argv[4]) || 8;
 
 // 5. Initialize the TeX and SVG engines
-const tex = new TeX({packages: AllPackages.filter(p => p !== 'bussproofs')});
+const tex = new TeX({
+  packages: AllPackages.filter(p => p !== 'bussproofs'),
+  formatError: (_, err) => {
+    throw new Error(err.message);
+  }
+});
 
 const svg = new SVG({
   fontCache: 'local',

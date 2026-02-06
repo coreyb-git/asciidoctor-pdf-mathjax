@@ -281,7 +281,7 @@ module MathjaxToSVGExtension
 
       svg_output, error = stem_to_svg(latex_content, math_font_name, is_inline)
 
-      if svg_output == ''
+      if svg_output.nil?
         s = "No svg produced when adjusting LaTeX:\n" + latex_content
         Asciidoctor::LoggerManager.logger.error(s)
         error = s
@@ -433,7 +433,10 @@ module MathjaxToSVGExtension
         svg_output = nil
       end
 
-      L('stem to svg error: ' + error) if error
+      error = 'SVG is blank for LaTeX: ' + latex_content if svg_output == ''
+      error = 'SVG output is nil for LaTeX: ' + latex_content if svg_output.nil?
+
+      L('stem to svg error: ' + error) unless error.nil?
 
       # remove any outlines -- looks grainy/aliased/pixilated
       svg_output.gsub!(/stroke=["'][^"']+["']/, 'stroke="none"')
