@@ -1,5 +1,4 @@
 # FIXME: Level 0 headings need a different, or no, prefix.  Tall SVG's push Title headings away from the top of the document (no margin?)
-# FIXME: Block stem can encroach into the footer.
 
 # TODO: Add ability to select custom MathJax v4 font.
 # TODO: When Level 0 headings are fixed, generate /test/verification PDF.
@@ -29,10 +28,11 @@ MATHJAX_DEFAULT_COLOR_STRING = 'currentColor'.freeze
 MATHJAX_DEFAULT_FONT_FAMILY = 'mathjax-newcm'.freeze
 
 ATTRIBUTE_FONT = 'math-font'.freeze
-ATTRIBUTE_CACHE_DIR = 'math-cache-dir'.freeze
+# ATTRIBUTE_CACHE_DIR = 'math-cache-dir'.freeze
+ATTRIBUTE_CACHE_DIR = 'imagesoutdir'.freeze # typical asciidoc image generation output path
 
 PREFIX_STEM = 'stem-'.freeze
-PREFIX_WIDTH = 'width-'.freeze # viewbox width cache files
+PREFIX_WIDTH = 'stem-width-'.freeze # viewbox width cache files
 
 ##### Normalize the height of the SVG image. #####
 # Prawn vertically centers SVG's, until the bottom of the image reaches the descender height.
@@ -195,10 +195,16 @@ module MathjaxToSVGExtension
       temp_handle = Tempfile.new([PREFIX_STEM, '.svg'])
       r.svg_file_path = temp_handle.path
       temp_handle.write(svg_output)
-      temp_handle.close
 
       # no unlinking here.  unlink after the temp file has been used.
-      (document.attributes['math_tempfiles_handles'] ||= []) << r.temp_file_handle
+      # Get the existing array or an empty one
+      handles = node.document.attr('math_tempfiles_handles') || []
+      # Add the new handle
+      handles << temp_handle
+      # Save it back formally
+      node.document.set_attr('math_tempfiles_handles', handles)
+
+      temp_handle.close
 
       L("returning uncached temp file path: #{r.svg_file_path}, and svg width: #{r.svg_width}")
 
@@ -342,7 +348,7 @@ module MathjaxToSVGExtension
         svg_output = updated_svg_output
       end
 
-      [svg_output: svg_output, svg_viewbox_width: v_width]
+      [{ svg_output: svg_output, svg_viewbox_width: v_width }]
     end
 
     def get_adjusted_svg_and_set_cached_width(node, latex_content, is_inline, hash_key)
@@ -539,7 +545,7 @@ module MathjaxToSVGExtension
           'target' => svg_result.svg_file_path,
           'align' => 'center',
           'pdfwidth' => svg_result.svg_width.to_s,
-          'alt' => svg_result.latex_content,
+          'alt' => CGI.escapeHTML(svg_result.latex_content),
           'format' => 'svg'
         }
 
@@ -580,9 +586,15 @@ module MathjaxToSVGExtension
       begin
         Asciidoctor::LoggerManager.logger.debug('Attempting to insert INLINE SVG.')
         if error.nil?
+          escaped_text = CGI.escapeHTML(node.text)
+
+          # Determine the backend
+          escaped_text = CGI.escapeHTML(node.text)
+
           Asciidoctor::LoggerManager.logger.debug "Successfully embedded stem inline #{node.text} with font #{svg_result.svg_font_name} as SVG image"
-          quoted_text = "<img src=\"#{svg_result.svg_file_path}\" format=\"svg\" width=\"#{svg_result.svg_width}\" alt=\"#{node.text}\">"
-          node.id ? %(<a id="#{node.id}">#{DummyText}</a>#{quoted_text}) : quoted_text
+          # Fallback to your existing PDF logic (or HTML string)
+          quoted_text = "<img src=\"#{svg_result.svg_file_path}\" format=\"svg\" width=\"#{svg_result.svg_width}\" alt=\"#{escaped_text}\">"
+          node.id ? %(<a id="#{node.id}"></a>#{quoted_text}) : quoted_text
         end
       rescue StandardError => e
         Asciidoctor::LoggerManager.logger.warn "Failed to process SVG: #{e.message}"
