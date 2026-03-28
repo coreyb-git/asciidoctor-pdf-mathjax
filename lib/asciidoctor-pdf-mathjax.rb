@@ -30,9 +30,10 @@ MATHJAX_DEFAULT_FONT_FAMILY = 'mathjax-newcm'.freeze
 ATTRIBUTE_FONT = 'math-font'.freeze
 # ATTRIBUTE_CACHE_DIR = 'math-cache-dir'.freeze
 ATTRIBUTE_CACHE_DIR = 'imagesoutdir'.freeze # typical asciidoc image generation output path
+ATTRIBUTE_IMAGES_DIR = 'imagesdir'.freeze # typical asciidoc image generation output path
 
-PREFIX_STEM = 'stem-'.freeze
-PREFIX_WIDTH = 'stem-width-'.freeze # viewbox width cache files
+PREFIX_STEM = 'cached-stem-'.freeze
+PREFIX_WIDTH = 'cached-stem-width-'.freeze # viewbox width cache files
 
 ##### Normalize the height of the SVG image. #####
 # Prawn vertically centers SVG's, until the bottom of the image reaches the descender height.
@@ -92,14 +93,14 @@ SCALE_INLINE_BODY_DEFAULT = 1.0
 SCALE_BODY_DEFAULT = 1.0
 
 module MathjaxToSVGExtension
-  Result_struct = Struct.new(:latex_content, :svg_font_name, :svg_width, :svg_file_path)
+  Result_struct = Struct.new(:latex_content, :svg_font_name, :svg_width, :svg_shortfilename, :svg_file_path)
 
   class MathjaxService
     @@cached_svg_viewbox_width = {}
     @@cache_dir_init_done = false
 
     def get_svg_info(node, is_inline)
-      r = Result_struct.new('', '', '', '')
+      r = Result_struct.new('', '', '', '', '')
 
       r.svg_font_name = get_math_font_name # part of final log when embedding into pdf
 
@@ -156,6 +157,7 @@ module MathjaxToSVGExtension
           FileUtils.mkdir_p(cache_dir) unless Dir.exist?(cache_dir)
         end
 
+        r.svg_shortfilename = get_short_filename(node, hash_key)
         r.svg_file_path = get_cached_svg_file_path(cache_dir, hash_key)
 
         if File.exist?(r.svg_file_path)
@@ -385,8 +387,18 @@ module MathjaxToSVGExtension
       (node.document.attributes[ATTRIBUTE_CACHE_DIR] || nil).freeze
     end
 
+    # prefix the filename with the :imagesdir: value
+    def get_short_filename(node, hash_key)
+      imagesdir = ''
+      unless node.document.attributes[ATTRIBUTE_IMAGES_DIR].nil?
+        imagesdir = node.document.attributes[ATTRIBUTE_IMAGES_DIR] + '/'
+      end
+      imagesdir = './'
+      "#{imagesdir}#{PREFIX_STEM}#{hash_key}.svg"
+    end
+
     def get_cached_svg_file_path(cache_dir, hash_key)
-      File.join(cache_dir, PREFIX_STEM + hash_key + '.svg')
+      File.join(cache_dir, "#{PREFIX_STEM}#{hash_key}.svg")
     end
 
     def get_cached_svg_width_path(cache_dir, hash_key)
@@ -572,7 +584,8 @@ module MathjaxToSVGExtension
         Asciidoctor::LoggerManager.logger.debug('Attempting to insert BLOCK SVG.')
 
         attrs = {
-          'target' => svg_result.svg_file_path,
+          # 'target' => svg_result.svg_file_path,
+          'target' => svg_result.svg_shortfilename,
           'align' => 'center',
           'pdfwidth' => svg_result.svg_width.to_s,
           'alt' => CGI.escapeHTML(svg_result.latex_content),
@@ -600,6 +613,7 @@ module MathjaxToSVGExtension
   end
 
   # Converters are low-level, however, better-handle inline stem than tree processors.
+  # PDF INLINE STEM BLOCKS ONLY - other converters will need to use asciidoctor-mathematical to convert to MathML
   class InlineProcessor < (Asciidoctor::Converter.for 'pdf')
     register_for 'pdf'
 
@@ -623,7 +637,9 @@ module MathjaxToSVGExtension
 
           Asciidoctor::LoggerManager.logger.debug "Successfully embedded stem inline #{node.text} with font #{svg_result.svg_font_name} as SVG image"
           # Fallback to your existing PDF logic (or HTML string)
-          quoted_text = "<img src=\"#{svg_result.svg_file_path}\" format=\"svg\" width=\"#{svg_result.svg_width}\" alt=\"#{escaped_text}\">"
+          # source = svg_result.svg_shortfilename
+          source = svg_result.svg_file_path
+          quoted_text = "<img src=\"#{source}\" format=\"svg\" width=\"#{svg_result.svg_width}\" alt=\"#{escaped_text}\">"
           node.id ? %(<a id="#{node.id}"></a>#{quoted_text}) : quoted_text
         end
       rescue StandardError => e
