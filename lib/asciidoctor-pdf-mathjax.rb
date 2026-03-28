@@ -266,7 +266,7 @@ module MathjaxToSVGExtension
       end
     end
 
-    # Calculate width of final SVG image for display at the surrounding font height.
+    # Calculate width of final SVG image node for display at the surrounding font height.
     def get_scaled_svg_width(node, font_size, viewbox_width, is_inline)
       L('viewbox width is: ' + viewbox_width.to_s)
 
@@ -282,6 +282,8 @@ module MathjaxToSVGExtension
       w
     end
 
+    # clears the style element, and inserts debug elements when debugging.
+    # returns the svg converted to em units, and the original svg width in EX units.
     def get_adjusted_svg_from_node(node, latex_content, is_inline)
       math_font_name = get_math_font_name
 
@@ -295,7 +297,12 @@ module MathjaxToSVGExtension
 
       return nil, error unless error.nil?
 
-      svg_output = adjust_svg_color(svg_output, @font_color)
+      # Fetch the color from the node, the document, or a hardcoded fallback
+      node_font_colour = node.attr('fontcolor') || node.document.attr('fontcolor') || FALLBACK_FONT_COLOR
+
+      # leave as currentColor.  This seems to be a legacy fix that isn't needed?  PDF's are printing to black
+      # regardless.
+      # svg_output = adjust_svg_color(svg_output, node_font_colour)
 
       svg_doc = REXML::Document.new(svg_output)
       root = svg_doc.root
@@ -305,6 +312,18 @@ module MathjaxToSVGExtension
       # Remove fuzzy outline
       root.attributes['shape-rendering'] = 'geometricPrecision'
       root.elements.delete_all('style')
+
+      # Change ex to em so that web/kindle respects device font size being changed.
+      svg_em_width = (root.attributes['width'].to_f * 0.5).round(3)
+      svg_em_height = (root.attributes['height'].to_f * 0.5).round(3)
+      root.attributes['width'] = "#{svg_em_width}em"
+      root.attributes['height'] = "#{svg_em_height}em"
+
+      if root.attributes['style'] =~ /vertical-align:\s*([\d.-]+)ex/
+        # Convert to em so the WHOLE file is ex-free
+        v_align_em = (::Regexp.last_match(1).to_f * 0.5).round(3)
+        root.attributes['style'] = "vertical-align: #{v_align_em}em;"
+      end
 
       vb = root.attributes['viewBox'].split.map(&:to_f)
       v_x = vb[0]
@@ -342,11 +361,11 @@ module MathjaxToSVGExtension
 
         # Insert as the FIRST child so it stays behind the math
         root.insert_before(root.elements[1], bg)
-
-        updated_svg_output = ''
-        svg_doc.write(updated_svg_output)
-        svg_output = updated_svg_output
       end
+
+      updated_svg_output = ''
+      svg_doc.write(updated_svg_output)
+      svg_output = updated_svg_output
 
       [{ svg_output: svg_output, svg_viewbox_width: v_width }]
     end
@@ -420,8 +439,19 @@ module MathjaxToSVGExtension
       end
     end
 
+    # unused... unneeded legacy code?
     def adjust_svg_color(svg_output, font_color)
-      svg_output.gsub(MATHJAX_DEFAULT_COLOR_STRING, "##{font_color}")
+      # 1. Handle nil or empty inputs using the fallback
+      # In Ruby, it's cleaner to check .nil? or .empty?
+      target_color = font_color.nil? || font_color.empty? ? FALLBACK_FONT_COLOR : font_color
+
+      # 2. Normalize the hex (strip the hash if it exists)
+      clean_hex = target_color.to_s.delete('#')
+
+      # 3. Perform the substitution
+      # We add the '#' back here to ensure the SVG attribute is valid
+      # Note: we return the result of gsub
+      svg_output.gsub(MATHJAX_DEFAULT_COLOR_STRING, "##{clean_hex}")
     end
 
     def stem_to_svg(latex_content, math_font_name, is_inline)
