@@ -227,8 +227,13 @@ module MathjaxToSVGExtension
 
     def get_latex_from_node(node, is_inline)
       if is_inline
-        node_arg1 = node.text
-        node_arg2 = node.type
+        # node_arg1 = node.text
+        # node_arg2 = node.type
+
+        # If the node is a Block (Paragraph/List), it won't have .text
+        # We check if it responds to .text (Inline) otherwise use the passed text
+        node_arg1 = node.respond_to?(:text) ? node.text : node.to_s
+        node_arg2 = node.respond_to?(:type) ? node.type : :latexmath # Default to latex
       else
         node_arg1 = node.content
         node_arg2 = node.style.to_sym
@@ -607,46 +612,236 @@ module MathjaxToSVGExtension
     end
   end
 
-  Asciidoctor::Extensions.register do
-    # treeprocessor BlockProcessor
-    treeprocessor MathjaxToSVGExtension::BlockProcessor
-  end
+  #
+  #   Asciidoctor::Extensions.register do
+  #     # treeprocessor BlockProcessor
+  #     treeprocessor MathjaxToSVGExtension::BlockProcessor
+  #   end
+  #
+  #   class InlineProcessor < (Asciidoctor::Converter.for 'pdf')
+  #     # Register for all backends to ensure the math is swapped consistently
+  #     register_for 'pdf'
+  #
+  #     def convert_inline_quoted(node)
+  #       # Only intercept math types
+  #       return super unless %i[asciimath latexmath].include?(node.type)
+  #
+  #       svg_result, error = SERVICE.get_svg_info(node, true)
+  #
+  #       if error
+  #         Asciidoctor::LoggerManager.logger.error(error)
+  #         return super
+  #       end
+  #
+  #       # Guard against empty content
+  #       return super if svg_result.nil? || svg_result.latex_content.to_s.empty?
+  #
+  #       begin
+  #         Asciidoctor::LoggerManager.logger.debug('Attempting to insert INLINE SVG.')
+  #
+  #         # 1. DEFINE SOURCE IMMEDIATELY
+  #         source = svg_result.svg_file_path
+  #
+  #         # 2. PDF SAFETY GUARD
+  #         # If source is nil, the PDF converter's 'start_with?' check will crash the build.
+  #         if source.nil? || source.empty?
+  #           Asciidoctor::LoggerManager.logger.warn "Math generation returned no file path for: #{node.text}"
+  #           return super
+  #         end
+  #
+  #         # 3. EPUB REGISTRATION
+  #         # This forces the EPUB packager to include the physical file in the ZIP manifest.
+  #         doc = node.document
+  #         doc.references[:images] << source unless doc.references[:images].include? source
+  #
+  #         escaped_text = CGI.escapeHTML(node.text)
+  #         width = svg_result.svg_width
+  #
+  #         # 4. CONSTRUCT THE TAG
+  #         # We use a standard HTML-style tag that the PDF, HTML, and EPUB backends all recognize.
+  #         quoted_text = %(<img src="#{source}" format=\"svg\" width="#{width}" alt="#{escaped_text}">)
+  #         node.id ? %(<a id="#{node.id}"></a>#{quoted_text}) : quoted_text
+  #       rescue StandardError => e
+  #         # Now 'source' is definitely defined or we've already returned,
+  #         # so the logger won't fail on an undefined variable.
+  #         Asciidoctor::LoggerManager.logger.warn "Failed to process SVG: #{e.message}"
+  #         super
+  #       end
+  #     end
+  #   end
 
-  # Converters are low-level, however, better-handle inline stem than tree processors.
-  # PDF INLINE STEM BLOCKS ONLY - other converters will need to use asciidoctor-mathematical to convert to MathML
-  class InlineProcessor < (Asciidoctor::Converter.for 'pdf')
-    register_for 'pdf'
+  class MathematicalTreeprocessor < Asciidoctor::Extensions::Treeprocessor
+    LineFeed = %(\n)
+    StemInlineMacroRx = /\\?(stem|(?:latex|ascii)math):([a-z,]*)\[(.*?[^\\])\]/m
 
-    def convert_inline_quoted(node)
-      svg_result, error = SERVICE.get_svg_info(node, true)
+    def process(document)
+      return unless document.attr? 'stem'
 
-      if error
-        Asciidoctor::LoggerManager.logger.error(error)
-        return super
+      (document.find_by context: :stem, traverse_documents: true).each do |stem|
+        handle_stem_block stem
       end
 
-      return super if svg_result.latex_content == ''
+      document.find_by(traverse_documents: true) do |b|
+        (b.content_model == :simple && (b.subs.include? :macros)) || b.context == :list_item
+      end.each do |prose|
+        handle_prose_block prose
+      end
 
+      (document.find_by content: :section).each do |sect|
+        handle_section_title sect
+      end
+
+      document.remove_attr 'stem'
       begin
-        Asciidoctor::LoggerManager.logger.debug('Attempting to insert INLINE SVG.')
-        if error.nil?
-          escaped_text = CGI.escapeHTML(node.text)
+        (document.instance_variable_get :@header_attributes).delete 'stem'
+      rescue StandardError
+        nil
+      end
 
-          # Determine the backend
-          escaped_text = CGI.escapeHTML(node.text)
+      nil
+    end
 
-          Asciidoctor::LoggerManager.logger.debug "Successfully embedded stem inline #{node.text} with font #{svg_result.svg_font_name} as SVG image"
-          # Fallback to your existing PDF logic (or HTML string)
-          # source = svg_result.svg_shortfilename
-          source = svg_result.svg_file_path
-          quoted_text = "<img src=\"#{source}\" format=\"svg\" width=\"#{svg_result.svg_width}\" alt=\"#{escaped_text}\">"
-          node.id ? %(<a id="#{node.id}"></a>#{quoted_text}) : quoted_text
-        end
-      rescue StandardError => e
-        Asciidoctor::LoggerManager.logger.warn "Failed to process SVG: #{e.message}"
-        super
+    def handle_stem_block(stem)
+      equation_type = stem.style.to_sym
+
+      case equation_type
+      when :latexmath
+        content = stem.content
+      when :asciimath
+        content = AsciiMath.parse(stem.content).to_latex
+      else
+        return
+      end
+
+      svg_result, error = SERVICE.get_svg_info(stem, false)
+
+      img_target = svg_result.svg_shortfilename
+      img_width = svg_result.svg_width
+
+      parent = stem.parent
+
+      alt_text = stem.attr 'alt', (equation_type == :latexmath ? %($$#{content}$$) : %(`#{content}`))
+
+      attrs = {
+        'target' => img_target,
+        'alt' => alt_text,
+        'align' => 'center',
+        'width' => img_width.to_s,        # For HTML/General
+        'pdfwidth' => "#{img_width}ex"    # FORCE the specific size in the PDF
+      }
+
+      parent = stem.parent
+      stem_image = create_image_block parent, attrs
+      stem_image.id = stem.id if stem.id
+      if (title = stem.attributes['title'])
+        stem_image.title = title
+      end
+      parent.blocks[parent.blocks.index stem] = stem_image
+    end
+
+    def handle_prose_block(prose)
+      if %i[list_item table_cell].include?(prose.context)
+        use_text_property = true
+        text = prose.instance_variable_get :@text
+      else
+        text = prose.lines * LineFeed
+      end
+      text, source_modified = handle_inline_stem(prose, text)
+
+      return unless source_modified
+
+      if use_text_property
+        prose.text = text
+      else
+        prose.lines = text.split LineFeed
       end
     end
+
+    def handle_section_title(sect)
+      text = sect.instance_variable_get :@title
+      text, source_modified = handle_inline_stem sect, text
+      sect.title = text if source_modified
+    end
+
+    def handle_inline_stem(node, text)
+      document = node.document
+      source_modified = false
+
+      return [text, source_modified] unless document.attr? 'stem'
+
+      to_html = document.basebackend? 'html'
+
+      default_equation_type = document.attr('stem').include?('tex') ? :latexmath : :asciimath
+
+      # TODO: skip passthroughs in the source (e.g., +stem:[x^2]+)
+      if text && text.include?(':') && (text.include?('stem:') || text.include?('math:'))
+        text = text.gsub(StemInlineMacroRx) do
+          if (m = $~)[0].start_with? '\\'
+            next m[0][1..-1]
+          end
+
+          next '' if (eq_data = m[3].rstrip).empty?
+
+          eq_data = eq_data.gsub('\]', ']')
+          subs = if m[2].nil_or_empty?
+                   to_html ? [:specialcharacters] : []
+                 else
+                   (node.resolve_pass_subs m[2])
+                 end
+          eq_data = node.apply_subs eq_data, subs unless subs.empty?
+          eq_type = (m[1] == 'stem' ? default_equation_type : m[1].to_sym)
+
+          # --- CREATE THE GHOST NODE ---
+          # We create a temporary Inline node that holds ONLY the captured math.
+          # This keeps your SERVICE happy but limits the scope to the equation.
+          ghost_node = Asciidoctor::Inline.new(node, :quoted, eq_data, type: eq_type)
+
+          # Inside your gsub loop in handle_inline_stem
+          svg_result, error = SERVICE.get_svg_info(ghost_node, true)
+
+          if error
+            Asciidoctor::LoggerManager.logger.error("Math Error: #{error}")
+            next m[0] # Return original text if it fails
+          end
+
+          source_modified = true
+
+          img_width = svg_result.svg_width
+
+          # 1. FORCE REGISTRATION
+          doc = node.document
+          if doc.respond_to?(:references)
+            # Ensure the images key is an array before pushing to it
+            doc.references[:images] ||= []
+            unless doc.references[:images].include?(svg_result.svg_file_path)
+              doc.references[:images] << svg_result.svg_file_path
+            end
+          end
+
+          # 2. BACKEND SPECIFIC LOGIC
+          is_epub = doc.basebackend? 'epub3'
+
+          # CRITICAL FIX: The EPUB converter crashes if 'node' doesn't have a stable
+          # chain up to a chapter. If node.parent is nil, or it's a heading/title,
+          # we MUST use the passthrough to bypass the internal Ruby registration.
+          use_passthrough = is_epub && (node.parent.nil? || %i[document section preamble].include?(node.context))
+
+          if use_passthrough
+            # Bypass the crashing 'register_media_file' by using raw HTML
+            %(pass:[<img src="#{svg_result.svg_shortfilename}" width="#{img_width}" height="auto" style="vertical-align: middle;" />])
+          else
+            # Standard macro for PDF and regular prose blocks
+            %(image:#{svg_result.svg_shortfilename}[width=#{img_width},pdfwidth=#{img_width}pt])
+          end
+        end
+      end
+
+      [text, source_modified]
+    end
+  end
+
+  Asciidoctor::Extensions.register do
+    treeprocessor MathjaxToSVGExtension::MathematicalTreeprocessor
   end
 end
 
