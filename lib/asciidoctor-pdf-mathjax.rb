@@ -32,6 +32,8 @@ ATTRIBUTE_FONT = 'math-font'.freeze
 ATTRIBUTE_CACHE_DIR = 'imagesoutdir'.freeze # typical asciidoc image generation output path
 ATTRIBUTE_IMAGES_DIR = 'imagesdir'.freeze # typical asciidoc image generation output path
 
+ATTRIBUTE_USE_LITERAL_PATH = 'math-use-literal-path'.freeze
+
 PREFIX_STEM = 'cached-stem-'.freeze
 PREFIX_WIDTH = 'cached-stem-width-'.freeze # viewbox width cache files
 
@@ -93,14 +95,15 @@ SCALE_INLINE_BODY_DEFAULT = 1.0
 SCALE_BODY_DEFAULT = 1.0
 
 module MathjaxToSVGExtension
-  Result_struct = Struct.new(:latex_content, :svg_font_name, :svg_width, :svg_shortfilename, :svg_file_path)
+  Result_struct = Struct.new(:latex_content, :svg_font_name, :svg_width_em, :svg_width_ex, :svg_width_pt, :svg_shortfilename,
+                             :svg_file_path)
 
   class MathjaxService
     @@cached_svg_viewbox_width = {}
     @@cache_dir_init_done = false
 
     def get_svg_info(node, is_inline)
-      r = Result_struct.new('', '', '', '', '')
+      r = Result_struct.new('', '', '', '', '', '', '')
 
       r.svg_font_name = get_math_font_name # part of final log when embedding into pdf
 
@@ -121,7 +124,7 @@ module MathjaxToSVGExtension
       end
       if node.document.attributes[ATTRIBUTE_CUSTOM_NORM]
         norm_prefix_visible = node.document.attributes[ATTRIBUTE_CUSTOM_NORM]
-        norm_prefix_hidden = "\vphantom{#{norm_prefix_hidden}}"
+        norm_prefix_hidden = "\\vphantom{#{norm_prefix_visible}}"
       end
 
       if is_inline
@@ -162,7 +165,10 @@ module MathjaxToSVGExtension
 
         if File.exist?(r.svg_file_path)
           viewbox_width = get_cached_svg_viewbox_width(cache_dir, hash_key)
-          r.svg_width = get_scaled_svg_width(node, font_data[:font_size], viewbox_width, is_inline)
+          scaled_width = get_scaled_svg_width(node, font_data[:font_size], viewbox_width, is_inline)
+          r.svg_width_em = get_em_from_viewbox_width(scaled_width)
+          r.svg_width_ex = get_ex_from_viewbox_width(scaled_width)
+          r.svg_width_pt = get_pt_from_viewbox_width(scaled_width, font_data[:font_size])
           L('Returning previously cached file and scaled width.')
           return r
         end
@@ -176,8 +182,10 @@ module MathjaxToSVGExtension
 
       svg_output = adjusted_svg[:svg_output]
       viewbox_width = adjusted_svg[:svg_viewbox_width]
-
-      r.svg_width = get_scaled_svg_width(node, font_data[:font_size], viewbox_width, is_inline)
+      scaled_width = get_scaled_svg_width(node, font_data[:font_size], viewbox_width, is_inline)
+      r.svg_width_em = get_em_from_viewbox_width(scaled_width)
+      r.svg_width_ex = get_ex_from_viewbox_width(scaled_width)
+      r.svg_width_pt = get_pt_from_viewbox_width(scaled_width, font_data[:font_size])
 
       unless cache_dir.nil? # cache to disk the width data
         L('Writing viewbox width to RAM')
@@ -208,7 +216,7 @@ module MathjaxToSVGExtension
 
       temp_handle.close
 
-      L("returning uncached temp file path: #{r.svg_file_path}, and svg width: #{r.svg_width}")
+      L("returning uncached temp file path: #{r.svg_file_path}")
 
       r
     end
@@ -273,24 +281,30 @@ module MathjaxToSVGExtension
       end
     end
 
-    # Calculate width of final SVG image node for display at the surrounding font height.
-    def get_scaled_svg_width(node, font_size, viewbox_width, is_inline)
-      L('viewbox width is: ' + viewbox_width.to_s)
+    def get_em_from_viewbox_width(width)
+      width / 1000
+    end
 
-      ex_width = viewbox_width / 500 # MathJax v4 approximate/generalized conversion.
+    def get_ex_from_viewbox_width(width)
+      width / 500.0 # MathJax v4 approximate/generalized conversion.
+    end
+
+    def get_pt_from_viewbox_width(width, font_size)
+      ex_width = get_ex_from_viewbox_width(width)
+
       svg_point_width = ex_width * POINTS_PER_EX # scale to 1pt.
       node_text_ratio = font_size / REFERENCE_FONT_SIZE.to_f # scale to local font size.
 
-      user_scaling = get_user_scaling(node, is_inline)
+      svg_point_width * node_text_ratio
+    end
 
-      w = svg_point_width * node_text_ratio * user_scaling
-      L('Returning SCALED WIDTH: ' + w.to_s)
-
-      w
+    # Calculate width of final SVG image node for display at the surrounding font height.
+    def get_scaled_svg_width(node, _font_size, viewbox_width, is_inline)
+      viewbox_width * get_user_scaling(node, is_inline)
     end
 
     # clears the style element, and inserts debug elements when debugging.
-    # returns the svg converted to em units, and the original svg width in EX units.
+    # adjusts internal svg width and height values.
     def get_adjusted_svg_from_node(node, latex_content, is_inline)
       math_font_name = get_math_font_name
 
@@ -305,7 +319,7 @@ module MathjaxToSVGExtension
       return nil, error unless error.nil?
 
       # Fetch the color from the node, the document, or a hardcoded fallback
-      node_font_colour = node.attr('fontcolor') || node.document.attr('fontcolor') || FALLBACK_FONT_COLOR
+      #      node_font_colour = node.attr('fontcolor') || node.document.attr('fontcolor') || FALLBACK_FONT_COLOR
 
       # leave as currentColor.  This seems to be a legacy fix that isn't needed?  PDF's are printing to black
       # regardless.
@@ -321,22 +335,29 @@ module MathjaxToSVGExtension
       root.elements.delete_all('style')
 
       # Change ex to em so that web/kindle respects device font size being changed.
-      svg_em_width = (root.attributes['width'].to_f * 0.5).round(3)
-      svg_em_height = (root.attributes['height'].to_f * 0.5).round(3)
-      root.attributes['width'] = "#{svg_em_width}em"
-      root.attributes['height'] = "#{svg_em_height}em"
+      # root_em_width = get_em_from_ex(root.attributes['width'].to_f)
+      # root_em_height = get_em_from_ex(root.attributes['height'].to_f)
+      # root.attributes['width'] = "#{root_em_width}em"
+      # root.attributes['height'] = "#{root_em_height}em"
 
       if root.attributes['style'] =~ /vertical-align:\s*([\d.-]+)ex/
         # Convert to em so the WHOLE file is ex-free
-        v_align_em = (::Regexp.last_match(1).to_f * 0.5).round(3)
-        root.attributes['style'] = "vertical-align: #{v_align_em}em;"
+        (::Regexp.last_match(1).to_f * 0.5).round(3)
+        #        root.attributes['style'] = "vertical-align: #{v_align_em}em;"
       end
 
+      # 1. Calculate the aspect ratio from the viewBox
       vb = root.attributes['viewBox'].split.map(&:to_f)
       v_x = vb[0]
       v_y = vb[1]
       v_width = vb[2]
       v_height = vb[3]
+
+      #  root.attributes['width'] = v_width # "#{(v_width / 500).round(3)}ex"
+      #     root.attributes['height'] = v_height # "#{(v_height / 500).round(3)}ex"
+      #     root.attributes.delete('width')
+      #     root.attributes.delete('height')
+      root.attributes['preserveAspectRatio'] = 'xMinYMin meet'
 
       # Add background if debug
       if get_debug_level(node) > 0
@@ -394,12 +415,13 @@ module MathjaxToSVGExtension
 
     # prefix the filename with the :imagesdir: value
     def get_short_filename(node, hash_key)
-      imagesdir = ''
-      unless node.document.attributes[ATTRIBUTE_IMAGES_DIR].nil?
-        imagesdir = node.document.attributes[ATTRIBUTE_IMAGES_DIR] + '/'
-      end
       imagesdir = './'
-      "#{imagesdir}#{PREFIX_STEM}#{hash_key}.svg"
+      name = "#{imagesdir}#{PREFIX_STEM}#{hash_key}.svg"
+      if node.document.attributes[ATTRIBUTE_USE_LITERAL_PATH]
+        name = get_cached_svg_file_path(get_cache_dir(node), hash_key)
+      end
+
+      name
     end
 
     def get_cached_svg_file_path(cache_dir, hash_key)
@@ -559,117 +581,6 @@ module MathjaxToSVGExtension
 
   SERVICE = MathjaxService.new
 
-  # Tree processors handle block level nodes.
-  class BlockProcessor < Asciidoctor::Extensions::Treeprocessor
-    def process(document)
-      # 1. Process the main document body
-      replace_stems_in_node(document)
-
-      # 2. Find all tables and process their cells
-      document.find_by(context: :table).each do |table|
-        table.rows.body.each do |row|
-          row.each do |cell|
-            replace_stems_in_node(cell.inner_document) if cell.style == :asciidoc && cell.inner_document
-          end
-        end
-      end
-      document
-    end
-
-    def replace_stems_in_node(container)
-      # This will now find STEM blocks within the scope of whatever
-      # container (Document or InnerDocument) is passed to it.
-      container.find_by(context: :stem).each do |node|
-        next unless %w[latexmath stem].include?(node.style)
-
-        svg_result, error = SERVICE.get_svg_info(node, false)
-        # ... your existing logic to create image_block ...
-        Asciidoctor::LoggerManager.logger.error(error) if error
-
-        Asciidoctor::LoggerManager.logger.debug('Attempting to insert BLOCK SVG.')
-
-        attrs = {
-          # 'target' => svg_result.svg_file_path,
-          'target' => svg_result.svg_shortfilename,
-          'align' => 'center',
-          'pdfwidth' => svg_result.svg_width.to_s,
-          'alt' => CGI.escapeHTML(svg_result.latex_content),
-          'format' => 'svg'
-        }
-
-        # The attributes must be nested INSIDE the options hash under the 'attributes' key
-        options = {
-          'content_model' => :empty,
-          :attributes => attrs
-        }
-
-        image_block = Asciidoctor::Block.new(node.parent, :image, options)
-
-        parent = node.parent
-        idx = parent.blocks.index(node)
-        parent.blocks[idx] = image_block if idx
-      end
-    end
-  end
-
-  #
-  #   Asciidoctor::Extensions.register do
-  #     # treeprocessor BlockProcessor
-  #     treeprocessor MathjaxToSVGExtension::BlockProcessor
-  #   end
-  #
-  #   class InlineProcessor < (Asciidoctor::Converter.for 'pdf')
-  #     # Register for all backends to ensure the math is swapped consistently
-  #     register_for 'pdf'
-  #
-  #     def convert_inline_quoted(node)
-  #       # Only intercept math types
-  #       return super unless %i[asciimath latexmath].include?(node.type)
-  #
-  #       svg_result, error = SERVICE.get_svg_info(node, true)
-  #
-  #       if error
-  #         Asciidoctor::LoggerManager.logger.error(error)
-  #         return super
-  #       end
-  #
-  #       # Guard against empty content
-  #       return super if svg_result.nil? || svg_result.latex_content.to_s.empty?
-  #
-  #       begin
-  #         Asciidoctor::LoggerManager.logger.debug('Attempting to insert INLINE SVG.')
-  #
-  #         # 1. DEFINE SOURCE IMMEDIATELY
-  #         source = svg_result.svg_file_path
-  #
-  #         # 2. PDF SAFETY GUARD
-  #         # If source is nil, the PDF converter's 'start_with?' check will crash the build.
-  #         if source.nil? || source.empty?
-  #           Asciidoctor::LoggerManager.logger.warn "Math generation returned no file path for: #{node.text}"
-  #           return super
-  #         end
-  #
-  #         # 3. EPUB REGISTRATION
-  #         # This forces the EPUB packager to include the physical file in the ZIP manifest.
-  #         doc = node.document
-  #         doc.references[:images] << source unless doc.references[:images].include? source
-  #
-  #         escaped_text = CGI.escapeHTML(node.text)
-  #         width = svg_result.svg_width
-  #
-  #         # 4. CONSTRUCT THE TAG
-  #         # We use a standard HTML-style tag that the PDF, HTML, and EPUB backends all recognize.
-  #         quoted_text = %(<img src="#{source}" format=\"svg\" width="#{width}" alt="#{escaped_text}">)
-  #         node.id ? %(<a id="#{node.id}"></a>#{quoted_text}) : quoted_text
-  #       rescue StandardError => e
-  #         # Now 'source' is definitely defined or we've already returned,
-  #         # so the logger won't fail on an undefined variable.
-  #         Asciidoctor::LoggerManager.logger.warn "Failed to process SVG: #{e.message}"
-  #         super
-  #       end
-  #     end
-  #   end
-
   class MathematicalTreeprocessor < Asciidoctor::Extensions::Treeprocessor
     LineFeed = %(\n)
     StemInlineMacroRx = /\\?(stem|(?:latex|ascii)math):([a-z,]*)\[(.*?[^\\])\]/m
@@ -701,6 +612,13 @@ module MathjaxToSVGExtension
       nil
     end
 
+    def get_dpi_adjusted(width_pt)
+      # dpi_target = 150
+      dpi_target = 90
+      dpi_base = 90
+      ((width_pt * dpi_target) / dpi_base).round(3)
+    end
+
     def handle_stem_block(stem)
       equation_type = stem.style.to_sym
 
@@ -713,21 +631,23 @@ module MathjaxToSVGExtension
         return
       end
 
-      svg_result, error = SERVICE.get_svg_info(stem, false)
+      svg_result, = SERVICE.get_svg_info(stem, false)
 
       img_target = svg_result.svg_shortfilename
-      img_width = svg_result.svg_width
-
-      parent = stem.parent
+      svg_result.svg_width_em
+      img_width_pt = svg_result.svg_width_pt
+      dpi_adjusted_pt = get_dpi_adjusted(img_width_pt)
 
       alt_text = stem.attr 'alt', (equation_type == :latexmath ? %($$#{content}$$) : %(`#{content}`))
+      # alt_text = ''
 
       attrs = {
         'target' => img_target,
         'alt' => alt_text,
         'align' => 'center',
-        'width' => img_width.to_s,        # For HTML/General
-        'pdfwidth' => "#{img_width}ex"    # FORCE the specific size in the PDF
+        'width' => "#{dpi_adjusted_pt}pt", # For HTML/General
+        'pdfwidth' => "#{img_width_pt}pt", # FORCE the specific size in the PDF
+        'format' => 'svg'
       }
 
       parent = stem.parent
@@ -806,8 +726,6 @@ module MathjaxToSVGExtension
 
           source_modified = true
 
-          img_width = svg_result.svg_width
-
           # 1. FORCE REGISTRATION
           doc = node.document
           if doc.respond_to?(:references)
@@ -826,12 +744,33 @@ module MathjaxToSVGExtension
           # we MUST use the passthrough to bypass the internal Ruby registration.
           use_passthrough = is_epub && (node.parent.nil? || %i[document section preamble].include?(node.context))
 
+          #           if use_passthrough
+          #             # Bypass the crashing 'register_media_file' by using raw HTML
+          #             %(pass:[<img src="#{svg_result.svg_shortfilename}" style="vertical-align: middle;" />])
+          #           else
+          #             # Standard macro for PDF and regular prose blocks
+          #             %(image:#{svg_result.svg_shortfilename}[pdfwidth=#{img_width_ex}ex])
+          #           end
+
+          alt_text = ''
+
+          svg_result.svg_width_em
+          img_width_pt = svg_result.svg_width_pt
+
+          dpi_adjusted_pt = get_dpi_adjusted(img_width_pt)
+
+          # CAN'T USE AUTO as kindle previewer crashes.
           if use_passthrough
             # Bypass the crashing 'register_media_file' by using raw HTML
-            %(pass:[<img src="#{svg_result.svg_shortfilename}" width="#{img_width}" height="auto" style="vertical-align: middle;" />])
+            %(pass:[<img src="#{svg_result.svg_shortfilename}" width="#{dpi_adjusted_pt}pt" style="vertical-align: middle;" />])
           else
             # Standard macro for PDF and regular prose blocks
-            %(image:#{svg_result.svg_shortfilename}[width=#{img_width},pdfwidth=#{img_width}pt])
+            # THIS ALSO IS FOR INLINE EPUB.
+            # It seems that only width and alt survive and pdfwidth survive, and other attributes are stripped by
+            # asciidoctor-epub3
+            # setting width to point seems to scale for inline blocks on kindle online previewer.
+            #   %(image:#{svg_result.svg_shortfilename}[pdfwidth=#{img_width_pt}pt, width=#{dpi_adjusted_pt}pt, alt="#{alt_text}"])
+            %(image:#{svg_result.svg_shortfilename}[pdfwidth=#{img_width_pt}pt, width=#{dpi_adjusted_pt}pt, alt="#{alt_text}"])
           end
         end
       end
